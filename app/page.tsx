@@ -31,10 +31,11 @@ export default function TrueLabelDashboard() {
     staked: 0,
     accuracy: 95.0,
     totalBatches: 0,
-    rank: 'Contributor'
+    rank: 'Silver'
   });
   
   const [baseBalance, setBaseBalance] = useState(0);
+  const [dailyBaseRate, setDailyBaseRate] = useState(0);
   const [activeBatch, setActiveBatch] = useState<Batch | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [batchGuesses, setBatchGuesses] = useState<('AI' | 'REAL')[]>([]);
@@ -42,6 +43,7 @@ export default function TrueLabelDashboard() {
   const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
   const [transferCode, setTransferCode] = useState<string>('');
   const [notification, setNotification] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
+  const [loaded, setLoaded] = useState(false);
 
   // Fetch user profile data from Supabase on mount
   useEffect(() => {
@@ -52,10 +54,9 @@ export default function TrueLabelDashboard() {
         const { createClient } = await import('@/lib/supabase');
         const supabase = createClient();
         
-        // FIX: Get response object, then extract data explicitly
         const response = await supabase
           .from('profiles')
-          .select('wallet_balance, staked, accuracy, total_batches, rank, base_balance')
+          .select('wallet_balance, accuracy, total_batches, rank, base_balance, daily_earning_rate')
           .eq('id', user.id)
           .single();
         
@@ -64,22 +65,40 @@ export default function TrueLabelDashboard() {
         const profile = response.data;
         
         if (profile) {
+          const balance = profile.wallet_balance || 0;
+          const calculatedRank = calculateRank(balance);
+          const calculatedDailyRate = calculateDailyRate(balance);
+          
           setUserStats({
-            credits: profile.wallet_balance || 0,
-            staked: profile.staked || 0,
+            credits: balance,
+            staked: 0,
             accuracy: profile.accuracy || 95.0,
             totalBatches: profile.total_batches || 0,
-            rank: profile.rank || 'Contributor'
+            rank: profile.rank || calculatedRank
           });
           setBaseBalance(profile.base_balance || 0);
+          setDailyBaseRate(profile.daily_earning_rate || calculatedDailyRate);
         }
       } catch (err) {
         console.warn('Could not fetch profile, using defaults:', err);
+      } finally {
+        setLoaded(true);
       }
     };
     
     fetchUserProfile();
   }, [user]);
+
+  const calculateRank = (balance: number): 'Silver' | 'Gold' | 'Platinum' => {
+    if (balance >= 10000) return 'Platinum';
+    if (balance >= 1000) return 'Gold';
+    return 'Silver';
+  };
+
+  const calculateDailyRate = (balance: number): number => {
+    if (balance <= 0) return 0;
+    return Math.floor(balance / 20);
+  };
 
   const showNotification = (msg: string, type: 'success' | 'error') => {
     setNotification({ msg, type });
@@ -90,16 +109,13 @@ export default function TrueLabelDashboard() {
     return Math.max(0, userStats.credits - baseBalance);
   };
 
+  // Calculate base reward per batch (daily_rate / 10 batches)
+  const getBaseRewardPerBatch = () => {
+    if (dailyBaseRate <= 0) return 5;
+    return Math.max(1, Math.floor(dailyBaseRate / 10));
+  };
+
   const acceptBatch = (batch: Batch) => {
-    if (userStats.credits < batch.stakeRequired) {
-      showNotification("Insufficient TLC for this batch.", "error");
-      return;
-    }
-    setUserStats(prev => ({ 
-      ...prev, 
-      credits: prev.credits - batch.stakeRequired, 
-      staked: prev.staked + batch.stakeRequired 
-    }));
     setActiveBatch(batch);
     setCurrentImageIndex(0);
     setBatchGuesses([]);
@@ -125,25 +141,37 @@ export default function TrueLabelDashboard() {
       const correctCount = Math.floor(Math.random() * 6);
       const accuracy = (correctCount / activeBatch!.imageCount) * 100;
       
-      let reward = 0;
+      // NEW ECONOMICS: Proportional bonuses based on base reward
+      const baseReward = getBaseRewardPerBatch();
+      let finalReward = baseReward;
+      
+      // Proportional accuracy modifier (20% of base reward)
+      const bonusAmount = Math.floor(baseReward * 0.2);
+      
       if (accuracy >= 80) {
-        reward = Math.floor(activeBatch!.maxReward * (accuracy / 100));
+        finalReward = baseReward + bonusAmount;  // +20%
+      } else if (accuracy >= 60) {
+        finalReward = baseReward + Math.floor(bonusAmount / 2);  // +10%
+      } else if (accuracy >= 40) {
+        finalReward = baseReward;  // Base rate
+      } else {
+        finalReward = Math.max(0, baseReward - bonusAmount);  // -20% (min 0)
       }
 
-      setBatchResult({ correctCount, totalCount: activeBatch!.imageCount, reward, accuracy });
+      setBatchResult({ 
+        correctCount, 
+        totalCount: activeBatch!.imageCount, 
+        reward: finalReward, 
+        accuracy
+      });
 
       setUserStats(prev => {
-        const newCredits = prev.credits + reward;
-        const newStaked = prev.staked - activeBatch!.stakeRequired;
-        let newRank = prev.rank;
-        if (prev.totalBatches > 50) newRank = 'Master';
-        else if (prev.totalBatches > 20) newRank = 'Expert';
-        else if (prev.totalBatches > 5) newRank = 'Contributor';
-
+        const newCredits = prev.credits + finalReward;
+        const newRank = calculateRank(newCredits);
+        
         return {
           ...prev,
           credits: newCredits,
-          staked: newStaked,
           accuracy: ((prev.accuracy * prev.totalBatches) + accuracy) / (prev.totalBatches + 1),
           totalBatches: prev.totalBatches + 1,
           rank: newRank
@@ -178,13 +206,23 @@ export default function TrueLabelDashboard() {
 
   const redeemCode = (e: React.FormEvent, amount: number) => {
     e.preventDefault();
-    setUserStats(prev => ({ ...prev, credits: prev.credits + amount }));
+    
+    setUserStats(prev => {
+      const newCredits = prev.credits + amount;
+      const newDailyRate = calculateDailyRate(newCredits);
+      return {
+        ...prev,
+        credits: newCredits,
+        rank: calculateRank(newCredits)
+      };
+    });
     setBaseBalance(prev => prev + amount);
+    setDailyBaseRate(calculateDailyRate(baseBalance + amount));
     setTransferCode('');
-    showNotification(`${amount} TLC Received.`, "success");
+    showNotification(`${amount} TLC Received. Daily earning rate: ${calculateDailyRate(baseBalance + amount)} TLC/day`, "success");
   };
 
-  if (authLoading) {
+  if (authLoading || !loaded) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
@@ -241,6 +279,7 @@ export default function TrueLabelDashboard() {
                 userStats={userStats} 
                 onAcceptBatch={acceptBatch}
                 currency="TLC"
+                dailyRate={dailyBaseRate}
               />
             )}
             {view === 'WORK' && (
@@ -249,6 +288,7 @@ export default function TrueLabelDashboard() {
                 currentImageIndex={currentImageIndex} 
                 onGuess={submitImageGuess}
                 currency="TLC"
+                baseReward={getBaseRewardPerBatch()}
               />
             )}
             {view === 'PROCESSING' && (
@@ -271,6 +311,7 @@ export default function TrueLabelDashboard() {
                 baseBalance={baseBalance}
                 transferableBalance={getTransferableBalance()}
                 currency="TLC"
+                dailyRate={dailyBaseRate}
               />
             )}
           </motion.div>

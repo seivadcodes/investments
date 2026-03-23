@@ -4,12 +4,13 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Wallet, Activity, ShieldCheck, Layers, Lock, Clock, 
-  ChevronRight, CheckCircle, AlertCircle, Copy, TrendingUp, Gift
+  ChevronRight, CheckCircle, AlertCircle, Copy, TrendingUp, Gift, Medal, DollarSign, Upload
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // --- TYPES ---
 export type ViewState = 'DASHBOARD' | 'WORK' | 'PROCESSING' | 'RESULTS' | 'WALLET';
+export type Rank = 'Silver' | 'Gold' | 'Platinum';
 
 export interface Batch {
   id: string;
@@ -25,7 +26,7 @@ export interface UserState {
   staked: number;
   accuracy: number;
   totalBatches: number;
-  rank: 'Trainee' | 'Contributor' | 'Expert' | 'Master';
+  rank: Rank;
 }
 
 export interface BatchResult {
@@ -40,8 +41,8 @@ export const AVAILABLE_BATCHES: Batch[] = [
   { 
     id: 'B-2024-001', 
     imageCount: 5, 
-    stakeRequired: 100, 
-    maxReward: 160, 
+    stakeRequired: 0,
+    maxReward: 60,
     difficulty: 'Standard',
     images: [
       'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=400',
@@ -54,8 +55,8 @@ export const AVAILABLE_BATCHES: Batch[] = [
   { 
     id: 'B-2024-002', 
     imageCount: 5, 
-    stakeRequired: 250, 
-    maxReward: 420, 
+    stakeRequired: 0,
+    maxReward: 60,
     difficulty: 'Premium',
     images: [
       'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400',
@@ -65,29 +66,16 @@ export const AVAILABLE_BATCHES: Batch[] = [
       'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=400',
     ]
   },
-  { 
-    id: 'B-2024-003', 
-    imageCount: 5, 
-    stakeRequired: 100, 
-    maxReward: 160, 
-    difficulty: 'Standard',
-    images: [
-      'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=400',
-      'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=400',
-      'https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=400',
-      'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=400',
-      'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=400',
-    ]
-  },
 ];
 
 // --- STAT CARD COMPONENT ---
-export const StatCard = ({ icon: Icon, label, value, color, currency = 'TLC' }: { 
+export const StatCard = ({ icon: Icon, label, value, color, currency, isCurrency = false }: { 
   icon: any; 
   label: string; 
   value: string | number; 
   color: string;
   currency?: string;
+  isCurrency?: boolean;
 }) => (
   <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
     <div className="flex items-center gap-3 mb-2">
@@ -97,7 +85,8 @@ export const StatCard = ({ icon: Icon, label, value, color, currency = 'TLC' }: 
       <span className="text-slate-500 text-sm font-medium">{label}</span>
     </div>
     <p className="text-2xl font-bold text-slate-900">
-      {typeof value === 'number' ? value.toLocaleString() : value} {currency}
+      {typeof value === 'number' ? value.toLocaleString() : value}
+      {isCurrency && currency && ` ${currency}`}
     </p>
   </div>
 );
@@ -106,38 +95,49 @@ export const StatCard = ({ icon: Icon, label, value, color, currency = 'TLC' }: 
 export const DashboardView = ({ 
   userStats, 
   onAcceptBatch,
-  currency = 'TLC'
+  currency = 'TLC',
+  dailyRate = 0
 }: { 
   userStats: UserState; 
   onAcceptBatch: (batch: Batch) => void;
   currency?: string;
+  dailyRate?: number;
 }) => (
   <div className="space-y-8">
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
       <StatCard 
         icon={Wallet} 
-        label="Available Balance" 
+        label="Balance" 
         value={userStats.credits} 
         color="bg-blue-500"
         currency={currency}
+        isCurrency={true}
+      />
+      <StatCard 
+        icon={DollarSign} 
+        label="Daily Earning Rate" 
+        value={dailyRate} 
+        color="bg-green-500"
+        currency={currency}
+        isCurrency={true}
+      />
+      <StatCard 
+        icon={Medal} 
+        label="Rank" 
+        value={userStats.rank} 
+        color={
+          userStats.rank === 'Platinum' ? 'bg-gray-300' :
+          userStats.rank === 'Gold' ? 'bg-yellow-400' :
+          'bg-gray-400'
+        }
+        isCurrency={false}
       />
       <StatCard 
         icon={Activity} 
-        label="Accuracy Score" 
+        label="Accuracy" 
         value={`${userStats.accuracy.toFixed(1)}%`} 
         color="bg-purple-500"
-      />
-      <StatCard 
-        icon={ShieldCheck} 
-        label="Rank" 
-        value={userStats.rank} 
-        color="bg-green-500"
-      />
-      <StatCard 
-        icon={Layers} 
-        label="Batches Done" 
-        value={userStats.totalBatches} 
-        color="bg-orange-500"
+        isCurrency={false}
       />
     </div>
 
@@ -145,7 +145,9 @@ export const DashboardView = ({
       <div className="p-6 border-b border-slate-100 flex justify-between items-center">
         <div>
           <h2 className="text-lg font-bold text-slate-800">Available Verification Batches</h2>
-          <p className="text-sm text-slate-500 mt-1">Stake {currency} to unlock. Rewards paid after consensus verification.</p>
+          <p className="text-sm text-slate-500 mt-1">
+            Earn {dailyRate} {currency}/day. Complete batches to earn. Accuracy affects your rewards.
+          </p>
         </div>
         <span className="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full font-medium">Live Queue</span>
       </div>
@@ -165,26 +167,20 @@ export const DashboardView = ({
                       batch.difficulty === 'Premium' ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-600"
                     )}>{batch.difficulty}</span>
                   </div>
-                  <p className="text-sm text-slate-500 mt-1">{batch.imageCount} images • Stake: {batch.stakeRequired} {currency}</p>
+                  <p className="text-sm text-slate-500 mt-1">{batch.imageCount} images per batch</p>
                 </div>
               </div>
               
               <div className="flex items-center gap-6">
                 <div className="text-right">
-                  <p className="text-xs text-slate-400">Max Reward</p>
-                  <p className="text-lg font-bold text-green-600">+{batch.maxReward} {currency}</p>
+                  <p className="text-xs text-slate-400">Est. Reward</p>
+                  <p className="text-lg font-bold text-green-600">~{Math.floor(batch.maxReward * 0.9)} {currency}</p>
                 </div>
                 <button 
                   onClick={() => onAcceptBatch(batch)}
-                  disabled={userStats.credits < batch.stakeRequired}
-                  className={cn(
-                    "px-6 py-3 rounded-lg font-bold text-sm flex items-center gap-2 transition-all",
-                    userStats.credits < batch.stakeRequired 
-                      ? "bg-slate-100 text-slate-400 cursor-not-allowed" 
-                      : "bg-slate-900 text-white hover:bg-slate-800 hover:shadow-lg"
-                  )}
+                  className="px-6 py-3 rounded-lg font-bold text-sm flex items-center gap-2 transition-all bg-slate-900 text-white hover:bg-slate-800 hover:shadow-lg"
                 >
-                  Accept Batch
+                  Start Verifying
                   <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
@@ -201,12 +197,14 @@ export const WorkView = ({
   activeBatch, 
   currentImageIndex, 
   onGuess,
-  currency = 'TLC'
+  currency = 'TLC',
+  baseReward = 50
 }: { 
   activeBatch: Batch | null; 
   currentImageIndex: number; 
   onGuess: (guess: 'AI' | 'REAL') => void;
   currency?: string;
+  baseReward?: number;
 }) => {
   if (!activeBatch) return null;
   const progress = ((currentImageIndex) / activeBatch.imageCount) * 100;
@@ -234,7 +232,9 @@ export const WorkView = ({
             <Lock className="w-4 h-4 text-slate-400" />
             <span className="text-sm font-medium text-slate-600">Secure Verification Environment</span>
           </div>
-          <span className="text-xs font-mono bg-slate-200 px-2 py-1 rounded">STAKED: {activeBatch.stakeRequired} {currency}</span>
+          <span className="text-xs font-mono bg-slate-200 px-2 py-1 rounded">
+            Earn {currency} based on accuracy
+          </span>
         </div>
         
         <div className="p-8">
@@ -251,7 +251,9 @@ export const WorkView = ({
 
           <div className="text-center mb-6">
             <h3 className="text-lg font-bold text-slate-800">Is this image AI-generated or human-created?</h3>
-            <p className="text-sm text-slate-500 mt-2">Your accuracy affects your rank and future batch availability.</p>
+            <p className="text-sm text-slate-500 mt-2">
+              Your accuracy determines your earnings. Aim for 80%+ accuracy for maximum rewards.
+            </p>
           </div>
 
           <div className="grid grid-cols-2 gap-4">
@@ -356,16 +358,8 @@ export const ResultsView = ({
           </div>
 
           <div className="bg-slate-900 rounded-xl p-6 text-white mb-8">
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-slate-400">Stake Returned</span>
-              <span className="font-mono">+{activeBatch.stakeRequired} {currency}</span>
-            </div>
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-slate-400">Performance Reward</span>
-              <span className="font-mono text-green-400">+{batchResult.reward} {currency}</span>
-            </div>
             <div className="border-t border-slate-700 pt-4 flex justify-between items-center">
-              <span className="font-bold">Net Change</span>
+              <span className="font-bold">Total Earned</span>
               <span className="font-mono text-xl font-bold text-green-400">+{batchResult.reward} {currency}</span>
             </div>
           </div>
@@ -390,7 +384,8 @@ export const WalletView = ({
   totalBalance = 0,
   baseBalance = 0,
   transferableBalance = 0,
-  currency = 'TLC'
+  currency = 'TLC',
+  dailyRate = 0
 }: { 
   transferCode: string; 
   onGenerateCode: (amount: number) => string | null; 
@@ -399,6 +394,7 @@ export const WalletView = ({
   baseBalance?: number;
   transferableBalance?: number;
   currency?: string;
+  dailyRate?: number;
 }) => {
   const [transferAmount, setTransferAmount] = useState('');
   const [redeemAmount, setRedeemAmount] = useState('100');
@@ -432,6 +428,15 @@ export const WalletView = ({
             <p className="text-xs text-slate-500">Locked (Base)</p>
             <p className="text-xl font-bold text-slate-400">{baseBalance.toLocaleString()} {currency}</p>
           </div>
+        </div>
+        <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+          <div className="flex items-center gap-2 text-green-700">
+            <DollarSign className="w-5 h-5" />
+            <span className="font-bold">Daily Earning Rate: {dailyRate.toLocaleString()} {currency}/day</span>
+          </div>
+          <p className="text-xs text-green-600 mt-1">
+            Based on your initial redemption. Complete ~10 batches/day to reach this target.
+          </p>
         </div>
         <p className="text-xs text-slate-400 mt-3">
           💡 You can only transfer {currency} you've earned. Base balance is locked until you earn more.
