@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
@@ -21,19 +22,19 @@ import {
 } from '@/components/dashboard/DashboardViews';
 
 export default function TrueLabelDashboard() {
-  // --- AUTH INTEGRATION ---
   const { user, loading: authLoading, signOut } = useAuth();
+  const router = useRouter();
   
-  // --- STATE ---
   const [view, setView] = useState<ViewState>('DASHBOARD');
   const [userStats, setUserStats] = useState<UserState>({
-    credits: 500,
+    credits: 0,
     staked: 0,
     accuracy: 95.0,
     totalBatches: 0,
     rank: 'Contributor'
   });
   
+  const [baseBalance, setBaseBalance] = useState(0);
   const [activeBatch, setActiveBatch] = useState<Batch | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [batchGuesses, setBatchGuesses] = useState<('AI' | 'REAL')[]>([]);
@@ -51,22 +52,26 @@ export default function TrueLabelDashboard() {
         const { createClient } = await import('@/lib/supabase');
         const supabase = createClient();
         
-        const { data: profile, error } = await supabase
+        // FIX: Get response object, then extract data explicitly
+        const response = await supabase
           .from('profiles')
-          .select('credits, staked, accuracy, total_batches, rank')
+          .select('wallet_balance, staked, accuracy, total_batches, rank, base_balance')
           .eq('id', user.id)
           .single();
-          
-        if (error) throw error;
+        
+        if (response.error) throw response.error;
+        
+        const profile = response.data;
         
         if (profile) {
           setUserStats({
-            credits: profile.credits || 500,
+            credits: profile.wallet_balance || 0,
             staked: profile.staked || 0,
             accuracy: profile.accuracy || 95.0,
             totalBatches: profile.total_batches || 0,
             rank: profile.rank || 'Contributor'
           });
+          setBaseBalance(profile.base_balance || 0);
         }
       } catch (err) {
         console.warn('Could not fetch profile, using defaults:', err);
@@ -76,16 +81,18 @@ export default function TrueLabelDashboard() {
     fetchUserProfile();
   }, [user]);
 
-  // --- ACTIONS ---
-
   const showNotification = (msg: string, type: 'success' | 'error') => {
     setNotification({ msg, type });
     setTimeout(() => setNotification(null), 3000);
   };
 
+  const getTransferableBalance = () => {
+    return Math.max(0, userStats.credits - baseBalance);
+  };
+
   const acceptBatch = (batch: Batch) => {
     if (userStats.credits < batch.stakeRequired) {
-      showNotification("Insufficient credits for this batch.", "error");
+      showNotification("Insufficient TLC for this batch.", "error");
       return;
     }
     setUserStats(prev => ({ 
@@ -112,7 +119,7 @@ export default function TrueLabelDashboard() {
 
   const handleSubmitBatch = (guesses: ('AI' | 'REAL')[]) => {
     setView('PROCESSING');
-    setProcessingTimeLeft(60); // 60 seconds for testing
+    setProcessingTimeLeft(60);
 
     setTimeout(() => {
       const correctCount = Math.floor(Math.random() * 6);
@@ -147,7 +154,6 @@ export default function TrueLabelDashboard() {
     }, 60000);
   };
 
-  // Processing Timer
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (view === 'PROCESSING' && processingTimeLeft > 0) {
@@ -158,20 +164,26 @@ export default function TrueLabelDashboard() {
     return () => clearInterval(timer);
   }, [view, processingTimeLeft]);
 
-  const generateTransferCode = () => {
-    const code = 'TL-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+  const generateTransferCode = (amount: number): string | null => {
+    const transferable = getTransferableBalance();
+    if (amount > transferable) {
+      showNotification(`You can only transfer TLC you've earned. Transferable: ${transferable} TLC`, "error");
+      return null;
+    }
+    const code = 'TLC-' + Math.random().toString(36).substr(2, 9).toUpperCase();
     setTransferCode(code);
     showNotification("Code generated. Valid for 24h.", "success");
+    return code;
   };
 
-  const redeemCode = (e: React.FormEvent) => {
+  const redeemCode = (e: React.FormEvent, amount: number) => {
     e.preventDefault();
-    setUserStats(prev => ({ ...prev, credits: prev.credits + 100 }));
+    setUserStats(prev => ({ ...prev, credits: prev.credits + amount }));
+    setBaseBalance(prev => prev + amount);
     setTransferCode('');
-    showNotification("Credits Received.", "success");
+    showNotification(`${amount} TLC Received.`, "success");
   };
 
-  // Loading state while auth is being checked
   if (authLoading) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -185,7 +197,6 @@ export default function TrueLabelDashboard() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
-      {/* Notification Toast */}
       <AnimatePresence>
         {notification && (
           <motion.div 
@@ -203,15 +214,19 @@ export default function TrueLabelDashboard() {
         )}
       </AnimatePresence>
 
-      {/* Header */}
       <Header 
         user={user} 
         onSignOut={signOut} 
         currentView={view} 
-        onViewChange={setView} 
+        onViewChange={(v) => {
+          if (v === 'WALLET') {
+            router.push('/wallet');
+          } else {
+            setView(v as ViewState);
+          }
+        }} 
       />
 
-      {/* Main Content */}
       <main className="flex-1 max-w-6xl mx-auto px-4 py-8 w-full">
         <AnimatePresence mode="wait">
           <motion.div
@@ -224,38 +239,44 @@ export default function TrueLabelDashboard() {
             {view === 'DASHBOARD' && (
               <DashboardView 
                 userStats={userStats} 
-                onAcceptBatch={acceptBatch} 
+                onAcceptBatch={acceptBatch}
+                currency="TLC"
               />
             )}
             {view === 'WORK' && (
               <WorkView 
                 activeBatch={activeBatch} 
                 currentImageIndex={currentImageIndex} 
-                onGuess={submitImageGuess} 
+                onGuess={submitImageGuess}
+                currency="TLC"
               />
             )}
             {view === 'PROCESSING' && (
-              <ProcessingView timeLeft={processingTimeLeft} />
+              <ProcessingView timeLeft={processingTimeLeft} currency="TLC" />
             )}
             {view === 'RESULTS' && (
               <ResultsView 
                 batchResult={batchResult} 
                 activeBatch={activeBatch} 
-                onReturn={() => setView('DASHBOARD')} 
+                onReturn={() => setView('DASHBOARD')}
+                currency="TLC"
               />
             )}
             {view === 'WALLET' && (
               <WalletView 
                 transferCode={transferCode} 
                 onGenerateCode={generateTransferCode} 
-                onRedeemCode={redeemCode} 
+                onRedeemCode={redeemCode}
+                totalBalance={userStats.credits}
+                baseBalance={baseBalance}
+                transferableBalance={getTransferableBalance()}
+                currency="TLC"
               />
             )}
           </motion.div>
         </AnimatePresence>
       </main>
 
-      {/* Footer */}
       <Footer />
     </div>
   );

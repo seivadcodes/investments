@@ -41,7 +41,7 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
               Dashboard
             </button>
             <button 
-              onClick={() => onViewChange('WALLET')} 
+              onClick={() => window.location.href = '/wallet'} 
               className={`text-sm font-medium ${
                 currentView === 'WALLET' ? 'text-blue-600' : 'text-slate-500 hover:text-slate-800'
               }`}

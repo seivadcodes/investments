@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { 
   Wallet, Activity, ShieldCheck, Layers, Lock, Clock, 
-  ChevronRight, CheckCircle, AlertCircle, Copy 
+  ChevronRight, CheckCircle, AlertCircle, Copy, TrendingUp, Gift
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -82,11 +82,12 @@ export const AVAILABLE_BATCHES: Batch[] = [
 ];
 
 // --- STAT CARD COMPONENT ---
-export const StatCard = ({ icon: Icon, label, value, color }: { 
+export const StatCard = ({ icon: Icon, label, value, color, currency = 'TLC' }: { 
   icon: any; 
   label: string; 
   value: string | number; 
   color: string;
+  currency?: string;
 }) => (
   <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
     <div className="flex items-center gap-3 mb-2">
@@ -95,26 +96,30 @@ export const StatCard = ({ icon: Icon, label, value, color }: {
       </div>
       <span className="text-slate-500 text-sm font-medium">{label}</span>
     </div>
-    <p className="text-2xl font-bold text-slate-900">{value}</p>
+    <p className="text-2xl font-bold text-slate-900">
+      {typeof value === 'number' ? value.toLocaleString() : value} {currency}
+    </p>
   </div>
 );
 
 // --- DASHBOARD VIEW ---
 export const DashboardView = ({ 
   userStats, 
-  onAcceptBatch 
+  onAcceptBatch,
+  currency = 'TLC'
 }: { 
   userStats: UserState; 
   onAcceptBatch: (batch: Batch) => void;
+  currency?: string;
 }) => (
   <div className="space-y-8">
-    {/* Stats Row */}
     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
       <StatCard 
         icon={Wallet} 
-        label="Available Credits" 
-        value={userStats.credits.toLocaleString()} 
+        label="Available Balance" 
+        value={userStats.credits} 
         color="bg-blue-500"
+        currency={currency}
       />
       <StatCard 
         icon={Activity} 
@@ -136,12 +141,11 @@ export const DashboardView = ({
       />
     </div>
 
-    {/* Batch Queue */}
     <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
       <div className="p-6 border-b border-slate-100 flex justify-between items-center">
         <div>
           <h2 className="text-lg font-bold text-slate-800">Available Verification Batches</h2>
-          <p className="text-sm text-slate-500 mt-1">Stake credits to unlock. Rewards paid after consensus verification.</p>
+          <p className="text-sm text-slate-500 mt-1">Stake {currency} to unlock. Rewards paid after consensus verification.</p>
         </div>
         <span className="text-xs bg-green-100 text-green-700 px-3 py-1 rounded-full font-medium">Live Queue</span>
       </div>
@@ -161,14 +165,14 @@ export const DashboardView = ({
                       batch.difficulty === 'Premium' ? "bg-purple-100 text-purple-700" : "bg-slate-100 text-slate-600"
                     )}>{batch.difficulty}</span>
                   </div>
-                  <p className="text-sm text-slate-500 mt-1">{batch.imageCount} images • Stake: {batch.stakeRequired} CR</p>
+                  <p className="text-sm text-slate-500 mt-1">{batch.imageCount} images • Stake: {batch.stakeRequired} {currency}</p>
                 </div>
               </div>
               
               <div className="flex items-center gap-6">
                 <div className="text-right">
                   <p className="text-xs text-slate-400">Max Reward</p>
-                  <p className="text-lg font-bold text-green-600">+{batch.maxReward} CR</p>
+                  <p className="text-lg font-bold text-green-600">+{batch.maxReward} {currency}</p>
                 </div>
                 <button 
                   onClick={() => onAcceptBatch(batch)}
@@ -196,11 +200,13 @@ export const DashboardView = ({
 export const WorkView = ({ 
   activeBatch, 
   currentImageIndex, 
-  onGuess 
+  onGuess,
+  currency = 'TLC'
 }: { 
   activeBatch: Batch | null; 
   currentImageIndex: number; 
   onGuess: (guess: 'AI' | 'REAL') => void;
+  currency?: string;
 }) => {
   if (!activeBatch) return null;
   const progress = ((currentImageIndex) / activeBatch.imageCount) * 100;
@@ -228,7 +234,7 @@ export const WorkView = ({
             <Lock className="w-4 h-4 text-slate-400" />
             <span className="text-sm font-medium text-slate-600">Secure Verification Environment</span>
           </div>
-          <span className="text-xs font-mono bg-slate-200 px-2 py-1 rounded">STAKED: {activeBatch.stakeRequired} CR</span>
+          <span className="text-xs font-mono bg-slate-200 px-2 py-1 rounded">STAKED: {activeBatch.stakeRequired} {currency}</span>
         </div>
         
         <div className="p-8">
@@ -271,7 +277,7 @@ export const WorkView = ({
 };
 
 // --- PROCESSING VIEW ---
-export const ProcessingView = ({ timeLeft }: { timeLeft: number }) => (
+export const ProcessingView = ({ timeLeft, currency = 'TLC' }: { timeLeft: number; currency?: string }) => (
   <div className="max-w-2xl mx-auto">
     <div className="bg-white rounded-xl border border-slate-200 shadow-lg p-12 text-center">
       <motion.div 
@@ -304,11 +310,13 @@ export const ProcessingView = ({ timeLeft }: { timeLeft: number }) => (
 export const ResultsView = ({ 
   batchResult, 
   activeBatch, 
-  onReturn 
+  onReturn,
+  currency = 'TLC'
 }: { 
   batchResult: BatchResult | null; 
   activeBatch: Batch | null; 
   onReturn: () => void;
+  currency?: string;
 }) => {
   if (!batchResult || !activeBatch) return null;
   const accuracyColor = batchResult.accuracy >= 80 
@@ -350,15 +358,15 @@ export const ResultsView = ({
           <div className="bg-slate-900 rounded-xl p-6 text-white mb-8">
             <div className="flex justify-between items-center mb-4">
               <span className="text-slate-400">Stake Returned</span>
-              <span className="font-mono">+{activeBatch.stakeRequired} CR</span>
+              <span className="font-mono">+{activeBatch.stakeRequired} {currency}</span>
             </div>
             <div className="flex justify-between items-center mb-4">
               <span className="text-slate-400">Performance Reward</span>
-              <span className="font-mono text-green-400">+{batchResult.reward} CR</span>
+              <span className="font-mono text-green-400">+{batchResult.reward} {currency}</span>
             </div>
             <div className="border-t border-slate-700 pt-4 flex justify-between items-center">
               <span className="font-bold">Net Change</span>
-              <span className="font-mono text-xl font-bold text-green-400">+{batchResult.reward} CR</span>
+              <span className="font-mono text-xl font-bold text-green-400">+{batchResult.reward} {currency}</span>
             </div>
           </div>
 
@@ -378,56 +386,143 @@ export const ResultsView = ({
 export const WalletView = ({ 
   transferCode, 
   onGenerateCode, 
-  onRedeemCode 
+  onRedeemCode,
+  totalBalance = 0,
+  baseBalance = 0,
+  transferableBalance = 0,
+  currency = 'TLC'
 }: { 
   transferCode: string; 
-  onGenerateCode: () => void; 
-  onRedeemCode: (e: React.FormEvent) => void;
-}) => (
-  <div className="max-w-2xl mx-auto space-y-6">
-    <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
-      <h2 className="text-lg font-bold text-slate-800 mb-4">Credit Transfer (P2P)</h2>
-      <p className="text-sm text-slate-500 mb-6">
-        Transfer credits to other verified contributors. Useful for team collaborations or resource sharing. 
-        <span className="block mt-1 text-xs text-slate-400">A 5% network fee applies to all transfers.</span>
-      </p>
+  onGenerateCode: (amount: number) => string | null; 
+  onRedeemCode: (e: React.FormEvent, amount: number) => void;
+  totalBalance?: number;
+  baseBalance?: number;
+  transferableBalance?: number;
+  currency?: string;
+}) => {
+  const [transferAmount, setTransferAmount] = useState('');
+  const [redeemAmount, setRedeemAmount] = useState('100');
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-          <h3 className="font-bold text-slate-700 mb-2">Generate Deposit Code</h3>
-          <p className="text-xs text-slate-500 mb-4">Create a code to gift credits to another user.</p>
-          <button 
-            onClick={onGenerateCode}
-            className="w-full py-2 bg-slate-900 text-white text-sm font-bold rounded hover:bg-slate-800"
-          >
-            Generate Code
-          </button>
-          {transferCode && (
-            <div className="mt-4 p-3 bg-white border border-slate-200 rounded flex justify-between items-center">
-              <code className="text-sm font-mono text-slate-800">{transferCode}</code>
-              <Copy className="w-4 h-4 text-slate-400 cursor-pointer" />
-            </div>
-          )}
+  const handleGenerate = () => {
+    const amount = parseInt(transferAmount);
+    if (amount && onGenerateCode(amount)) {
+      setTransferAmount('');
+    }
+  };
+
+  const handleRedeem = (e: React.FormEvent) => {
+    const amount = parseInt(redeemAmount) || 100;
+    onRedeemCode(e, amount);
+  };
+
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
+      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <h2 className="text-lg font-bold text-slate-800 mb-4">Balance Overview</h2>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="p-4 bg-slate-50 rounded-lg text-center">
+            <p className="text-xs text-slate-500">Total Balance</p>
+            <p className="text-xl font-bold text-slate-800">{totalBalance.toLocaleString()} {currency}</p>
+          </div>
+          <div className="p-4 bg-blue-50 rounded-lg text-center border border-blue-200">
+            <p className="text-xs text-blue-600">Transferable</p>
+            <p className="text-xl font-bold text-blue-700">{transferableBalance.toLocaleString()} {currency}</p>
+          </div>
+          <div className="p-4 bg-slate-50 rounded-lg text-center">
+            <p className="text-xs text-slate-500">Locked (Base)</p>
+            <p className="text-xl font-bold text-slate-400">{baseBalance.toLocaleString()} {currency}</p>
+          </div>
         </div>
+        <p className="text-xs text-slate-400 mt-3">
+          💡 You can only transfer {currency} you've earned. Base balance is locked until you earn more.
+        </p>
+      </div>
 
-        <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-          <h3 className="font-bold text-slate-700 mb-2">Redeem Code</h3>
-          <p className="text-xs text-slate-500 mb-4">Enter a code received from another contributor.</p>
-          <form onSubmit={onRedeemCode} className="flex gap-2">
-            <input 
-              type="text" 
-              placeholder="TL-XXXXXXXX" 
-              className="flex-1 px-3 py-2 border border-slate-300 rounded text-sm"
-            />
-            <button className="px-4 py-2 bg-blue-600 text-white text-sm font-bold rounded hover:bg-blue-700">
-              Redeem
+      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
+        <h2 className="text-lg font-bold text-slate-800 mb-4">Transfer {currency} (P2P)</h2>
+        <p className="text-sm text-slate-500 mb-6">
+          Gift {currency} to other verified contributors. 
+          <span className="block mt-1 text-xs text-slate-400">A 5% network fee applies to all transfers.</span>
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+            <h3 className="font-bold text-slate-700 mb-2">Generate Gift Code</h3>
+            <p className="text-xs text-slate-500 mb-4">Create a code to gift {currency} to another user.</p>
+            
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                Amount to Gift (Max: {transferableBalance} {currency})
+              </label>
+              <input
+                type="number"
+                value={transferAmount}
+                onChange={(e) => setTransferAmount(e.target.value)}
+                placeholder="Enter amount"
+                min="10"
+                max={transferableBalance}
+                className="w-full px-3 py-2 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+              />
+            </div>
+            
+            <button 
+              onClick={handleGenerate}
+              disabled={!transferAmount || parseInt(transferAmount) <= 0 || parseInt(transferAmount) > transferableBalance}
+              className="w-full py-2 bg-slate-900 text-white text-sm font-bold rounded hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              Generate Code
             </button>
-          </form>
+            
+            {transferCode && (
+              <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded">
+                <p className="text-xs text-green-700 font-medium mb-1">Your Gift Code:</p>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 text-sm font-mono font-bold text-green-800">{transferCode}</code>
+                  <button 
+                    onClick={() => navigator.clipboard.writeText(transferCode)}
+                    className="p-1 hover:bg-green-100 rounded"
+                  >
+                    <Copy className="w-4 h-4 text-green-600" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
+            <h3 className="font-bold text-slate-700 mb-2">Redeem Gift Code</h3>
+            <p className="text-xs text-slate-500 mb-4">Enter a code received from another contributor.</p>
+            
+            <div className="mb-3">
+              <label className="block text-xs font-medium text-slate-600 mb-1">
+                Expected Amount (for verification)
+              </label>
+              <input
+                type="number"
+                value={redeemAmount}
+                onChange={(e) => setRedeemAmount(e.target.value)}
+                placeholder="100"
+                min="10"
+                className="w-full px-3 py-2 border border-slate-300 rounded text-sm focus:ring-2 focus:ring-green-500 outline-none"
+              />
+            </div>
+            
+            <form onSubmit={handleRedeem} className="flex gap-2">
+              <input 
+                type="text" 
+                placeholder="TLC-XXXXXXXX" 
+                className="flex-1 px-3 py-2 border border-slate-300 rounded text-sm font-mono uppercase"
+              />
+              <button className="px-4 py-2 bg-green-600 text-white text-sm font-bold rounded hover:bg-green-500">
+                Redeem
+              </button>
+            </form>
+          </div>
         </div>
       </div>
     </div>
-  </div>
-);
+  );
+};
 
 // --- MISSING ICON COMPONENT ---
 export function ShieldAlert({ className }: { className?: string }) {
