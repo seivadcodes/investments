@@ -13,13 +13,13 @@ import {
   Batch,
   UserState,
   BatchResult,
-  AVAILABLE_BATCHES,
   DashboardView,
   WorkView,
   ProcessingView,
   ResultsView,
   WalletView
 } from '@/components/dashboard/DashboardViews';
+import { createClient } from '@/lib/supabase';
 
 export default function TrueLabelDashboard() {
   const { user, loading: authLoading, signOut } = useAuth();
@@ -44,25 +44,25 @@ export default function TrueLabelDashboard() {
   const [transferCode, setTransferCode] = useState<string>('');
   const [notification, setNotification] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [hasCompletedDailyBatch, setHasCompletedDailyBatch] = useState(false);
+  const [isFetchingBatch, setIsFetchingBatch] = useState(false);
 
-  // Fetch user profile data from Supabase on mount
+  // Fetch user profile & check daily completion
   useEffect(() => {
     const fetchUserProfile = async () => {
       if (!user?.id) return;
       
       try {
-        const { createClient } = await import('@/lib/supabase');
         const supabase = createClient();
         
-        const response = await supabase
+        // 1. Get Profile
+        const { data: profile, error: profileError } = await supabase
           .from('profiles')
           .select('wallet_balance, accuracy, total_batches, rank, base_balance, daily_earning_rate')
           .eq('id', user.id)
           .single();
         
-        if (response.error) throw response.error;
-        
-        const profile = response.data;
+        if (profileError) throw profileError;
         
         if (profile) {
           const balance = profile.wallet_balance || 0;
@@ -77,10 +77,25 @@ export default function TrueLabelDashboard() {
             rank: profile.rank || calculatedRank
           });
           setBaseBalance(profile.base_balance || 0);
-          setDailyBaseRate(profile.daily_earning_rate || calculatedDailyRate);
+          setDailyBaseRate(calculatedDailyRate);
+
+          // 2. Check if user already completed a batch today
+          const today = new Date().toISOString().split('T')[0];
+          const { data: recentBatches, error: batchError } = await supabase
+            .from('batch_completions')
+            .select('id')
+            .eq('user_id', user.id)
+            .gte('completed_at', `${today}T00:00:00`)
+            .limit(1);
+
+          if (batchError) console.error('Error checking completions:', batchError);
+
+          if (recentBatches && recentBatches.length > 0) {
+            setHasCompletedDailyBatch(true);
+          }
         }
       } catch (err) {
-        console.warn('Could not fetch profile, using defaults:', err);
+        console.warn('Could not fetch profile:', err);
       } finally {
         setLoaded(true);
       }
@@ -109,17 +124,65 @@ export default function TrueLabelDashboard() {
     return Math.max(0, userStats.credits - baseBalance);
   };
 
-  // Calculate base reward per batch (daily_rate / 10 batches)
-  const getBaseRewardPerBatch = () => {
-    if (dailyBaseRate <= 0) return 5;
-    return Math.max(1, Math.floor(dailyBaseRate / 10));
-  };
+  // --- FIXED: Fetch Random Images for Batch ---
+  const fetchNewBatch = async () => {
+    if (!user?.id) return;
+    
+    if (hasCompletedDailyBatch) {
+      showNotification("You have already completed your daily task!", "error");
+      return;
+    }
 
-  const acceptBatch = (batch: Batch) => {
-    setActiveBatch(batch);
-    setCurrentImageIndex(0);
-    setBatchGuesses([]);
-    setView('WORK');
+    setIsFetchingBatch(true);
+
+    try {
+      const supabase = createClient();
+      
+      console.log("🔍 Fetching random images from database...");
+      
+      // Fetch 5 random active images
+      const { data: images, error } = await supabase
+        .from('verification_images')
+        .select('id, image_url')
+        .eq('is_active', true)
+        .order('used_count', { ascending: true }) 
+        .limit(5);
+
+      console.log("📦 Database Response:", { images, error });
+
+      if (error) {
+        console.error("Supabase Error:", error);
+        throw new Error(`Database error: ${error.message}`);
+      }
+
+      if (!images || images.length === 0) {
+        console.warn("⚠️ No images found in database!");
+        showNotification("No verification tasks available right now. Please check back later or contact admin to upload images.", "error");
+        setIsFetchingBatch(false);
+        return;
+      }
+
+      const batch: Batch = {
+        id: `B-${Date.now()}`,
+        imageCount: images.length,
+        stakeRequired: 0,
+        maxReward: dailyBaseRate, 
+        difficulty: 'Standard',
+        images: images.map(img => img.image_url),
+        imageIds: images.map(img => img.id) 
+      };
+
+      console.log("✅ Batch created:", batch);
+      setActiveBatch(batch);
+      setCurrentImageIndex(0);
+      setBatchGuesses([]);
+      setView('WORK');
+    } catch (err: any) {
+      console.error("❌ Failed to load batch:", err);
+      showNotification(err.message || "Failed to load batch. Check console for details.", "error");
+    } finally {
+      setIsFetchingBatch(false);
+    }
   };
 
   const submitImageGuess = (guess: 'AI' | 'REAL') => {
@@ -137,47 +200,57 @@ export default function TrueLabelDashboard() {
     setView('PROCESSING');
     setProcessingTimeLeft(60);
 
-    setTimeout(() => {
-      const correctCount = Math.floor(Math.random() * 6);
-      const accuracy = (correctCount / activeBatch!.imageCount) * 100;
+    setTimeout(async () => {
+      // SIMULATE HIGH ACCURACY (80% - 100%)
+      const randomAccuracy = Math.floor(Math.random() * 21) + 80; // 80 to 100
+      const correctCount = Math.floor((randomAccuracy / 100) * activeBatch!.imageCount);
       
-      // NEW ECONOMICS: Proportional bonuses based on base reward
-      const baseReward = getBaseRewardPerBatch();
-      let finalReward = baseReward;
-      
-      // Proportional accuracy modifier (20% of base reward)
-      const bonusAmount = Math.floor(baseReward * 0.2);
-      
-      if (accuracy >= 80) {
-        finalReward = baseReward + bonusAmount;  // +20%
-      } else if (accuracy >= 60) {
-        finalReward = baseReward + Math.floor(bonusAmount / 2);  // +10%
-      } else if (accuracy >= 40) {
-        finalReward = baseReward;  // Base rate
-      } else {
-        finalReward = Math.max(0, baseReward - bonusAmount);  // -20% (min 0)
-      }
+      // CALCULATE REWARD: Full Daily Rate based on accuracy
+      const finalReward = Math.floor(dailyBaseRate * (randomAccuracy / 100));
 
       setBatchResult({ 
         correctCount, 
         totalCount: activeBatch!.imageCount, 
         reward: finalReward, 
-        accuracy
+        accuracy: randomAccuracy
       });
 
-      setUserStats(prev => {
-        const newCredits = prev.credits + finalReward;
-        const newRank = calculateRank(newCredits);
-        
-        return {
-          ...prev,
-          credits: newCredits,
-          accuracy: ((prev.accuracy * prev.totalBatches) + accuracy) / (prev.totalBatches + 1),
-          totalBatches: prev.totalBatches + 1,
-          rank: newRank
-        };
-      });
+      // Update User Stats
+      const newCredits = userStats.credits + finalReward;
+      const newRank = calculateRank(newCredits);
+      
+      setUserStats(prev => ({
+        ...prev,
+        credits: newCredits,
+        accuracy: ((prev.accuracy * prev.totalBatches) + randomAccuracy) / (prev.totalBatches + 1),
+        totalBatches: prev.totalBatches + 1,
+        rank: newRank
+      }));
 
+      // Log Completion in DB
+      const supabase = createClient();
+      try {
+        await supabase.from('batch_completions').insert({
+          user_id: user!.id,
+          batch_id: activeBatch!.id,
+          accuracy: randomAccuracy,
+          reward_earned: finalReward,
+          completed_at: new Date().toISOString()
+        });
+
+        // Update image usage counts
+        if (activeBatch?.imageIds) {
+          await Promise.all(
+            activeBatch.imageIds.map(id => 
+              supabase.rpc('increment_image_usage', { img_id: id })
+            )
+          );
+        }
+      } catch (dbErr) {
+        console.error("Failed to save completion:", dbErr);
+      }
+
+      setHasCompletedDailyBatch(true);
       setView('RESULTS');
     }, 60000);
   };
@@ -195,31 +268,29 @@ export default function TrueLabelDashboard() {
   const generateTransferCode = (amount: number): string | null => {
     const transferable = getTransferableBalance();
     if (amount > transferable) {
-      showNotification(`You can only transfer TLC you've earned. Transferable: ${transferable} TLC`, "error");
+      showNotification(`Transferable: ${transferable} TLC`, "error");
       return null;
     }
     const code = 'TLC-' + Math.random().toString(36).substr(2, 9).toUpperCase();
     setTransferCode(code);
-    showNotification("Code generated. Valid for 24h.", "success");
+    showNotification("Code generated.", "success");
     return code;
   };
 
   const redeemCode = (e: React.FormEvent, amount: number) => {
     e.preventDefault();
+    const newCredits = userStats.credits + amount;
+    const newDailyRate = calculateDailyRate(newCredits);
     
-    setUserStats(prev => {
-      const newCredits = prev.credits + amount;
-      const newDailyRate = calculateDailyRate(newCredits);
-      return {
-        ...prev,
-        credits: newCredits,
-        rank: calculateRank(newCredits)
-      };
-    });
+    setUserStats(prev => ({
+      ...prev,
+      credits: newCredits,
+      rank: calculateRank(newCredits)
+    }));
     setBaseBalance(prev => prev + amount);
-    setDailyBaseRate(calculateDailyRate(baseBalance + amount));
+    setDailyBaseRate(newDailyRate);
     setTransferCode('');
-    showNotification(`${amount} TLC Received. Daily earning rate: ${calculateDailyRate(baseBalance + amount)} TLC/day`, "success");
+    showNotification(`${amount} TLC Received. New Daily Rate: ${newDailyRate} TLC`, "success");
   };
 
   if (authLoading || !loaded) {
@@ -227,7 +298,7 @@ export default function TrueLabelDashboard() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
           <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-slate-500">Loading your workspace...</p>
+          <p className="text-slate-500">Loading workspace...</p>
         </div>
       </div>
     );
@@ -257,38 +328,31 @@ export default function TrueLabelDashboard() {
         onSignOut={signOut} 
         currentView={view} 
         onViewChange={(v) => {
-          if (v === 'WALLET') {
-            router.push('/wallet');
-          } else {
-            setView(v as ViewState);
-          }
+          if (v === 'WALLET') router.push('/wallet');
+          else setView(v as ViewState);
         }} 
       />
 
       <main className="flex-1 max-w-6xl mx-auto px-4 py-8 w-full">
         <AnimatePresence mode="wait">
-          <motion.div
-            key={view}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.2 }}
-          >
+          <motion.div key={view} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
             {view === 'DASHBOARD' && (
               <DashboardView 
                 userStats={userStats} 
-                onAcceptBatch={acceptBatch}
+                onStartBatch={fetchNewBatch}
                 currency="TLC"
                 dailyRate={dailyBaseRate}
+                hasCompletedToday={hasCompletedDailyBatch}
+                isLoading={isFetchingBatch}
               />
             )}
-            {view === 'WORK' && (
+            {view === 'WORK' && activeBatch && (
               <WorkView 
                 activeBatch={activeBatch} 
                 currentImageIndex={currentImageIndex} 
                 onGuess={submitImageGuess}
                 currency="TLC"
-                baseReward={getBaseRewardPerBatch()}
+                potentialReward={dailyBaseRate}
               />
             )}
             {view === 'PROCESSING' && (
@@ -317,7 +381,6 @@ export default function TrueLabelDashboard() {
           </motion.div>
         </AnimatePresence>
       </main>
-
       <Footer />
     </div>
   );
