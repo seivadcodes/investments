@@ -35,7 +35,7 @@ export default function TrueLabelDashboard() {
   });
   
   const [baseBalance, setBaseBalance] = useState(0);
-  const [dailyBaseRate, setDailyBaseRate] = useState(10);
+  const [dailyBaseRate, setDailyBaseRate] = useState(0);
   const [activeBatch, setActiveBatch] = useState<Batch | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [batchGuesses, setBatchGuesses] = useState<('AI' | 'REAL')[]>([]);
@@ -47,6 +47,13 @@ export default function TrueLabelDashboard() {
   const [hasCompletedDailyBatch, setHasCompletedDailyBatch] = useState(false);
   const [isFetchingBatch, setIsFetchingBatch] = useState(false);
 
+  // 🔑 REDIRECT TO AUTH IF NOT LOGGED IN
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.replace('/auth');
+    }
+  }, [user, authLoading, router]);
+
   useEffect(() => {
     const fetchUserProfile = async () => {
       if (!user?.id) return;
@@ -54,13 +61,15 @@ export default function TrueLabelDashboard() {
       try {
         const supabase = createClient();
         
-        const { data: profile, error: profileError } = await supabase
+        const response = await supabase
           .from('profiles')
-          .select('wallet_balance, accuracy, total_batches, rank, base_balance, daily_earning_rate')
+          .select('wallet_balance, base_balance, is_broker, accuracy, total_batches, rank, daily_earning_rate')
           .eq('id', user.id)
           .single();
         
-        if (profileError) throw profileError;
+        if (response.error) throw response.error;
+        
+        const profile = response.data;
         
         if (profile) {
           const balance = profile.wallet_balance || 0;
@@ -74,11 +83,10 @@ export default function TrueLabelDashboard() {
             rank: profile.rank || calculateRank(balance)
           });
           setBaseBalance(profile.base_balance || 0);
-          // Use DB value if exists, otherwise calculate
           setDailyBaseRate(profile.daily_earning_rate || calculatedDailyRate);
 
           const today = new Date().toISOString().split('T')[0];
-          const { data: recentBatches } = await supabase
+          const {  recentBatches } = await supabase
             .from('batch_completions')
             .select('id')
             .eq('user_id', user.id)
@@ -105,10 +113,9 @@ export default function TrueLabelDashboard() {
     return 'Silver';
   };
 
-  // ✅ FIXED: 20-day recovery model
   const calculateDailyRate = (balance: number): number => {
-    if (balance <= 0) return 10; // Minimum for new users
-    return Math.max(10, Math.floor(balance / 20)); // Balance / 20 days
+    if (balance <= 0) return 0;
+    return Math.floor(balance / 20);
   };
 
   const showNotification = (msg: string, type: 'success' | 'error') => {
@@ -122,6 +129,12 @@ export default function TrueLabelDashboard() {
 
   const fetchNewBatch = async () => {
     if (!user?.id) return;
+
+    if (userStats.credits <= 0) {
+      showNotification("You need TLC balance to access tasks. Go to Wallet to redeem coins.", "error");
+      return;
+    }
+    
     if (hasCompletedDailyBatch) {
       showNotification("Daily task already completed!", "error");
       return;
@@ -132,7 +145,7 @@ export default function TrueLabelDashboard() {
     try {
       const supabase = createClient();
       
-      const { data: images, error } = await supabase
+      const {  images, error } = await supabase
         .from('verification_images')
         .select('id, image_url')
         .eq('is_active', true)
@@ -140,6 +153,7 @@ export default function TrueLabelDashboard() {
         .limit(5);
 
       if (error) throw error;
+
       if (!images || images.length === 0) {
         showNotification("No tasks available. Upload images first!", "error");
         setIsFetchingBatch(false);
@@ -183,11 +197,8 @@ export default function TrueLabelDashboard() {
     setProcessingTimeLeft(30);
 
     setTimeout(async () => {
-      // Random accuracy 80-100%
       const randomAccuracy = Math.floor(Math.random() * 21) + 80;
       const correctCount = Math.floor((randomAccuracy / 100) * activeBatch!.imageCount);
-      
-      // ✅ FIXED: User gets their FULL daily rate (80-100% accuracy range ensures fair payout)
       const finalReward = dailyBaseRate;
 
       setBatchResult({ 
@@ -242,9 +253,18 @@ export default function TrueLabelDashboard() {
   }, [view, processingTimeLeft]);
 
   const generateTransferCode = (amount: number): string | null => {
+    const amountNum = parseInt(transferAmount);
     const transferable = getTransferableBalance();
-    if (amount > transferable) {
-      showNotification(`Transferable: ${transferable} TLC`, "error");
+    if (!amountNum || amountNum <= 0) {
+      showNotification("Please enter a valid amount", "error");
+      return null;
+    }
+    if (amountNum > transferable) {
+      showNotification(`You can only transfer earned coins. Available: ${transferable} TLC`, "error");
+      return null;
+    }
+    if (!isBroker && amountNum < 10) {
+      showNotification("Minimum transfer is 10 TLC", "error");
       return null;
     }
     const code = 'TLC-' + Math.random().toString(36).substr(2, 9).toUpperCase();
@@ -269,6 +289,7 @@ export default function TrueLabelDashboard() {
     showNotification(`${amount} TLC Received. Daily Rate: ${newDailyRate} TLC/day`, "success");
   };
 
+  // 🔑 SHOW LOADING WHILE CHECKING AUTH
   if (authLoading || !loaded) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
@@ -278,6 +299,11 @@ export default function TrueLabelDashboard() {
         </div>
       </div>
     );
+  }
+
+  // 🔑 REDIRECT HAPPENS IN useEffect, but show nothing while redirecting
+  if (!user) {
+    return null;
   }
 
   return (

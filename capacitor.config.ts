@@ -5,7 +5,7 @@ const config: CapacitorConfig = {
   appName: 'Depressed Together',
   webDir: 'out', 
   server: {
-    url: 'https://www.depressedtogether.com', // Your live Vercel URL
+    url: 'https://investments-delta.vercel.app/', // Your live Vercel URL
     cleartext: true, 
   },
   android: {
