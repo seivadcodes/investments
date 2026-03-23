@@ -36,6 +36,8 @@ export default function TrueLabelDashboard() {
   
   const [baseBalance, setBaseBalance] = useState(0);
   const [dailyBaseRate, setDailyBaseRate] = useState(0);
+  const [isBroker, setIsBroker] = useState(false); // 🔑 Added
+  const [transferAmount, setTransferAmount] = useState(''); // 🔑 Added
   const [activeBatch, setActiveBatch] = useState<Batch | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [batchGuesses, setBatchGuesses] = useState<('AI' | 'REAL')[]>([]);
@@ -69,7 +71,7 @@ export default function TrueLabelDashboard() {
         
         if (response.error) throw response.error;
         
-        const profile = response.data;
+        const profile = response.data; // ✅ FIX: Extract data
         
         if (profile) {
           const balance = profile.wallet_balance || 0;
@@ -83,17 +85,18 @@ export default function TrueLabelDashboard() {
             rank: profile.rank || calculateRank(balance)
           });
           setBaseBalance(profile.base_balance || 0);
+          setIsBroker(profile.is_broker || false); // 🔑 Set broker flag
           setDailyBaseRate(profile.daily_earning_rate || calculatedDailyRate);
 
           const today = new Date().toISOString().split('T')[0];
-          const {  recentBatches } = await supabase
+          const batchesResponse = await supabase
             .from('batch_completions')
             .select('id')
             .eq('user_id', user.id)
             .gte('completed_at', `${today}T00:00:00`)
             .limit(1);
 
-          if (recentBatches && recentBatches.length > 0) {
+          if (!batchesResponse.error && batchesResponse.data && batchesResponse.data.length > 0) {
             setHasCompletedDailyBatch(true);
           }
         }
@@ -124,6 +127,7 @@ export default function TrueLabelDashboard() {
   };
 
   const getTransferableBalance = () => {
+    if (isBroker) return userStats.credits;
     return Math.max(0, userStats.credits - baseBalance);
   };
 
@@ -145,14 +149,16 @@ export default function TrueLabelDashboard() {
     try {
       const supabase = createClient();
       
-      const {  images, error } = await supabase
+      const imagesResponse = await supabase
         .from('verification_images')
         .select('id, image_url')
         .eq('is_active', true)
         .order('used_count', { ascending: true }) 
         .limit(5);
 
-      if (error) throw error;
+      if (imagesResponse.error) throw imagesResponse.error;
+
+      const images = imagesResponse.data; // ✅ FIX: Extract data
 
       if (!images || images.length === 0) {
         showNotification("No tasks available. Upload images first!", "error");
@@ -166,8 +172,8 @@ export default function TrueLabelDashboard() {
         stakeRequired: 0,
         maxReward: dailyBaseRate, 
         difficulty: 'Standard',
-        images: images.map(img => img.image_url),
-        imageIds: images.map(img => img.id) 
+        images: images.map((img: any) => img.image_url), // ✅ FIX: Add type
+        imageIds: images.map((img: any) => img.id) // ✅ FIX: Add type
       };
 
       setActiveBatch(batch);
@@ -253,17 +259,16 @@ export default function TrueLabelDashboard() {
   }, [view, processingTimeLeft]);
 
   const generateTransferCode = (amount: number): string | null => {
-    const amountNum = parseInt(transferAmount);
     const transferable = getTransferableBalance();
-    if (!amountNum || amountNum <= 0) {
+    if (!amount || amount <= 0) {
       showNotification("Please enter a valid amount", "error");
       return null;
     }
-    if (amountNum > transferable) {
+    if (amount > transferable) {
       showNotification(`You can only transfer earned coins. Available: ${transferable} TLC`, "error");
       return null;
     }
-    if (!isBroker && amountNum < 10) {
+    if (!isBroker && amount < 10) {
       showNotification("Minimum transfer is 10 TLC", "error");
       return null;
     }
