@@ -192,7 +192,7 @@ export default function AuthPage() {
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="John Doe"
                     required
-                    className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                    className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-slate-900 placeholder:text-slate-400 bg-white"
                   />
                 </div>
               </div>
@@ -210,7 +210,7 @@ export default function AuthPage() {
                   onChange={handleEmailChange}
                   placeholder="you@example.com"
                   required
-                  className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                  className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-slate-900 placeholder:text-slate-400 bg-white"
                 />
               </div>
             </div>
@@ -228,7 +228,7 @@ export default function AuthPage() {
                   placeholder="••••••••"
                   required
                   minLength={6}
-                  className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                  className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-slate-900 placeholder:text-slate-400 bg-white"
                 />
               </div>
               <p className="text-xs text-slate-400 mt-1">Minimum 6 characters</p>
@@ -293,7 +293,7 @@ export default function AuthPage() {
   );
 }
 
-// Helper for Tailwind class merging (if not already in your utils)
+// Helper for Tailwind class merging
 function cn(...classes: (string | undefined | null | false)[]) {
   return classes.filter(Boolean).join(' ');
 }

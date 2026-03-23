@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
@@ -15,7 +15,9 @@ import {
   History,
   Download,
   RefreshCw,
-  Coins
+  Coins,
+  Lock,
+  Crown
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
@@ -47,6 +49,8 @@ export default function WalletPage() {
   const router = useRouter();
   
   const [balance, setBalance] = useState(0);
+  const [baseBalance, setBaseBalance] = useState(0);
+  const [isBroker, setIsBroker] = useState(false); // 🔑 New broker flag
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [transferCodes, setTransferCodes] = useState<TransferCode[]>([]);
   const [transferAmount, setTransferAmount] = useState('');
@@ -56,28 +60,40 @@ export default function WalletPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Fetch wallet data
-  const fetchWalletData = async () => {
+  const balanceRef = useRef(balance);
+  const baseBalanceRef = useRef(baseBalance);
+  const isBrokerRef = useRef(isBroker);
+
+  useEffect(() => {
+    balanceRef.current = balance;
+    baseBalanceRef.current = baseBalance;
+    isBrokerRef.current = isBroker;
+  }, [balance, baseBalance, isBroker]);
+
+  // 🔑 Brokers can transfer ANY amount (no restrictions)
+  const getTransferableBalance = useCallback(() => {
+    if (isBrokerRef.current) return balanceRef.current; // Brokers: full balance
+    return Math.max(0, balanceRef.current - baseBalanceRef.current); // Regular: earned only
+  }, []);
+
+  const fetchWalletData = useCallback(async () => {
     if (!user?.id) return;
     
     try {
       setRefreshing(true);
       const supabase = createClient();
       
-      // Get balance from profiles - USE wallet_balance COLUMN
-      const { data: profile, error: profileError } = await supabase
+      // 🔑 Fetch is_broker flag along with balances
+      const response = await supabase
         .from('profiles')
-        .select('wallet_balance')
+        .select('wallet_balance, base_balance, is_broker')
         .eq('id', user.id)
         .single();
       
-      if (profileError) {
-        console.error('Profile fetch error:', profileError);
+      if (response.error) {
+        console.error('Profile fetch error:', response.error);
         
-        // If profile doesn't exist (PGRST116), create it
-        if (profileError.code === 'PGRST116') {
-          console.log('Profile not found, creating one...');
-          
+        if (response.error.code === 'PGRST116') {
           const { error: insertError } = await supabase
             .from('profiles')
             .insert({
@@ -85,58 +101,70 @@ export default function WalletPage() {
               email: user.email,
               full_name: user.user_metadata?.full_name || user.email?.split('@')[0],
               wallet_balance: 0,
+              base_balance: 0,
+              is_broker: false,
               created_at: new Date().toISOString(),
               last_seen: new Date().toISOString(),
               onboarding_completed: false
             });
           
-          if (insertError) {
-            console.error('Failed to create profile:', insertError);
-          } else {
+          if (!insertError) {
             setBalance(0);
+            setBaseBalance(0);
+            setIsBroker(false);
+            balanceRef.current = 0;
+            baseBalanceRef.current = 0;
+            isBrokerRef.current = false;
           }
         } else {
           showNotification("Could not load wallet data", "error");
         }
       } else {
-        setBalance(profile?.wallet_balance ?? 0);
+        const profile = response.data;
+        const newBalance = profile?.wallet_balance ?? 0;
+        const newBase = profile?.base_balance ?? 0;
+        const newIsBroker = profile?.is_broker ?? false;
+        
+        setBalance(newBalance);
+        setBaseBalance(newBase);
+        setIsBroker(newIsBroker);
+        balanceRef.current = newBalance;
+        baseBalanceRef.current = newBase;
+        isBrokerRef.current = newIsBroker;
       }
       
-      // Get transactions
-      const { data: txns, error: txnsError } = await supabase
+      const txnsResponse = await supabase
         .from('wallet_transactions')
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(50);
       
-      if (!txnsError && txns) {
-        setTransactions(txns);
+      if (!txnsResponse.error && txnsResponse.data) {
+        setTransactions(txnsResponse.data);
       }
       
-      // Get active transfer codes
-      const { data: codes, error: codesError } = await supabase
+      const codesResponse = await supabase
         .from('transfer_codes')
         .select('*')
         .eq('sender_id', user.id)
         .eq('status', 'ACTIVE')
         .order('created_at', { ascending: false });
       
-      if (!codesError && codes) {
-        setTransferCodes(codes);
+      if (!codesResponse.error && codesResponse.data) {
+        setTransferCodes(codesResponse.data);
       }
     } catch (err) {
       console.warn('Could not fetch wallet data:', err);
-      setBalance(0);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, [user]);
 
   useEffect(() => {
     fetchWalletData();
-  }, [user]);
+  }, [fetchWalletData]);
 
   const showNotification = (msg: string, type: 'success' | 'error') => {
     setNotification({ msg, type });
@@ -150,24 +178,27 @@ export default function WalletPage() {
       return;
     }
     
-    if (amount > balance) {
-      showNotification("Insufficient balance", "error");
+    const transferable = getTransferableBalance();
+    
+    // 🔑 Brokers bypass transferable balance check
+    if (!isBrokerRef.current && amount > transferable) {
+      showNotification(`You can only transfer earned coins. Available: ${transferable} TLC`, "error");
       return;
     }
     
-    if (amount < 10) {
-      showNotification("Minimum transfer is 10 TLT", "error");
+    // Regular users still have minimum
+    if (!isBrokerRef.current && amount < 10) {
+      showNotification("Minimum transfer is 10 TLC", "error");
       return;
     }
     
     try {
       const supabase = createClient();
-      const code = 'TL-' + Math.random().toString(36).substr(2, 9).toUpperCase();
+      const code = 'TLC-' + Math.random().toString(36).substr(2, 9).toUpperCase();
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       
-      const newBalance = balance - amount;
+      const newBalance = balanceRef.current - amount;
       
-      // Create transfer code
       const { error: codeError } = await supabase
         .from('transfer_codes')
         .insert({
@@ -180,7 +211,6 @@ export default function WalletPage() {
       
       if (codeError) throw codeError;
       
-      // Create transaction record
       const { error: txnError } = await supabase
         .from('wallet_transactions')
         .insert({
@@ -188,12 +218,13 @@ export default function WalletPage() {
           type: 'GIFT_SENT',
           amount: -amount,
           balance_after: newBalance,
-          description: `Gift code ${code} created`
+          description: isBrokerRef.current 
+            ? `Gift code ${code} (Broker distribution)` 
+            : `Gift code ${code} (earned coins)`
         });
       
       if (txnError) throw txnError;
       
-      // Update profile balance - USE wallet_balance COLUMN
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ wallet_balance: newBalance })
@@ -202,19 +233,21 @@ export default function WalletPage() {
       if (updateError) throw updateError;
       
       setBalance(newBalance);
+      balanceRef.current = newBalance;
       setGeneratedCode(code);
       setTransferAmount('');
-      showNotification("Gift code generated!", "success");
+      showNotification(isBrokerRef.current ? "Broker code generated!" : "Gift code generated!", "success");
       
-      // Refresh codes list
-      const { data: codes } = await supabase
+      const codesResponse = await supabase
         .from('transfer_codes')
         .select('*')
         .eq('sender_id', user!.id)
         .eq('status', 'ACTIVE')
         .order('created_at', { ascending: false });
       
-      if (codes) setTransferCodes(codes);
+      if (!codesResponse.error && codesResponse.data) {
+        setTransferCodes(codesResponse.data);
+      }
       
     } catch (err: any) {
       console.error(err);
@@ -225,7 +258,6 @@ export default function WalletPage() {
   const redeemTransferCode = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // 1. Clean input aggressively
     const rawInput = redeemCode;
     const cleanCode = rawInput.trim().toUpperCase().replace(/\s+/g, '');
     
@@ -234,72 +266,54 @@ export default function WalletPage() {
       return;
     }
     
-    if (!cleanCode.startsWith('TL-')) {
-      showNotification("Invalid format. Code must start with 'TL-'", "error");
+    if (!cleanCode.startsWith('TLC-')) {
+      showNotification("Invalid format. Code must start with 'TLC-'", "error");
       return;
     }
     
     try {
       const supabase = createClient();
       
-      console.log('🔍 Searching for code:', cleanCode);
-      
-      // 2. Search for the specific code - CORRECT SUPABASE SYNTAX
-      const { data: codeData, error: codeError } = await supabase
+      const codeResponse = await supabase
         .from('transfer_codes')
         .select('*')
         .eq('code', cleanCode)
         .single();
       
-      // 3. Handle NOT FOUND error
-      if (codeError) {
-        console.error('❌ Supabase error:', codeError);
-        
-        if (codeError.code === 'PGRST116') {
-          showNotification(
-            `Code "${cleanCode}" not found. Check for typos, or ask sender to regenerate.`, 
-            "error"
-          );
+      if (codeResponse.error) {
+        if (codeResponse.error.code === 'PGRST116') {
+          showNotification(`Code "${cleanCode}" not found. Check for typos.`, "error");
         } else {
-          showNotification("Database error: " + codeError.message, "error");
+          showNotification("Database error: " + codeResponse.error.message, "error");
         }
         return;
       }
       
+      const codeData = codeResponse.data;
+      
       if (!codeData) {
-        showNotification("Code does not exist in system.", "error");
+        showNotification("Code does not exist.", "error");
         return;
       }
       
-      console.log('✅ Found code:', codeData);
-      
-      // 4. Validate status
       if (codeData.status === 'REDEEMED') {
-        showNotification("❌ This code was already redeemed by someone else.", "error");
+        showNotification("❌ This code was already redeemed.", "error");
         return;
       }
       
-      if (codeData.status === 'EXPIRED') {
+      if (codeData.status === 'EXPIRED' || new Date(codeData.expires_at) < new Date()) {
         showNotification("❌ This code has expired.", "error");
         return;
       }
       
-      if (new Date(codeData.expires_at) < new Date()) {
-        showNotification("❌ This code expired on " + new Date(codeData.expires_at).toLocaleString(), "error");
-        return;
-      }
-      
       if (codeData.sender_id === user!.id) {
-        showNotification("❌ You cannot redeem your own gift code.", "error");
+        showNotification("❌ You cannot redeem your own code.", "error");
         return;
       }
       
-      // 5. Process the redemption
-      const newBalance = balance + codeData.amount;
+      const newBalance = balanceRef.current + codeData.amount;
+      const newBaseBalance = baseBalanceRef.current + codeData.amount;
       
-      console.log('💰 Updating balance:', balance, '->', newBalance);
-      
-      // Update code status FIRST (atomic operation)
       const { error: updateCodeError } = await supabase
         .from('transfer_codes')
         .update({
@@ -310,17 +324,8 @@ export default function WalletPage() {
         .eq('code', cleanCode)
         .eq('status', 'ACTIVE');
       
-      if (updateCodeError) {
-        console.error('❌ Failed to update code status:', updateCodeError);
-        if (updateCodeError.code === 'PGRST116') {
-          showNotification("❌ This code was just redeemed by someone else!", "error");
-        } else {
-          showNotification("❌ System error: " + updateCodeError.message, "error");
-        }
-        return;
-      }
+      if (updateCodeError) throw updateCodeError;
       
-      // Create transaction record
       const { error: txnError } = await supabase
         .from('wallet_transactions')
         .insert({
@@ -328,46 +333,39 @@ export default function WalletPage() {
           type: 'GIFT_RECEIVED',
           amount: codeData.amount,
           balance_after: newBalance,
-          description: `Redeemed code ${cleanCode}`
+          description: `Redeemed code ${cleanCode} (base balance locked)`
         });
       
-      if (txnError) {
-        console.error('❌ Failed to create transaction:', txnError);
-        // Rollback: mark code as ACTIVE again
-        await supabase
-          .from('transfer_codes')
-          .update({ status: 'ACTIVE', redeemed_by_id: null, redeemed_at: null })
-          .eq('code', cleanCode);
-        showNotification("❌ Transaction failed. Code restored.", "error");
-        return;
-      }
+      if (txnError) throw txnError;
       
-      // Update user's profile balance
       const { error: updateError } = await supabase
         .from('profiles')
-        .update({ wallet_balance: newBalance })
+        .update({ 
+          wallet_balance: newBalance,
+          base_balance: newBaseBalance
+        })
         .eq('id', user!.id);
       
-      if (updateError) {
-        console.error('❌ Failed to update profile:', updateError);
-        showNotification("❌ Balance update failed. Contact support.", "error");
-        return;
-      }
+      if (updateError) throw updateError;
       
-      // Success!
       setBalance(newBalance);
-      setRedeemCode('');
-      showNotification(`✅ Received ${codeData.amount.toLocaleString()} TLT!`, "success");
+      setBaseBalance(newBaseBalance);
+      balanceRef.current = newBalance;
+      baseBalanceRef.current = newBaseBalance;
       
-      // Refresh transactions
-      const { data: txns } = await supabase
+      setRedeemCode('');
+      showNotification(`✅ Received ${codeData.amount.toLocaleString()} TLC!`, "success");
+      
+      const txnsResponse = await supabase
         .from('wallet_transactions')
         .select('*')
         .eq('user_id', user!.id)
         .order('created_at', { ascending: false })
         .limit(50);
       
-      if (txns) setTransactions(txns);
+      if (!txnsResponse.error && txnsResponse.data) {
+        setTransactions(txnsResponse.data);
+      }
       
     } catch (err: any) {
       console.error('💥 Unexpected error:', err);
@@ -387,14 +385,17 @@ export default function WalletPage() {
 
   if (authLoading || loading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="text-center">
-          <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-slate-500">Loading wallet...</p>
+          <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-500 text-sm sm:text-base">Loading wallet...</p>
         </div>
       </div>
     );
   }
+
+  const transferableBalance = getTransferableBalance();
+  const dailyRate = Math.floor(baseBalance / 20);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
@@ -405,12 +406,12 @@ export default function WalletPage() {
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -50, opacity: 0 }}
             className={cn(
-              "fixed top-4 right-4 z-50 px-6 py-3 rounded-lg shadow-lg font-bold text-sm flex items-center gap-2",
+              "fixed top-4 right-4 left-4 sm:left-auto sm:w-auto z-50 px-4 sm:px-6 py-3 rounded-lg shadow-lg font-bold text-sm flex items-center gap-2 max-w-sm",
               notification.type === 'success' ? "bg-green-600 text-white" : "bg-red-600 text-white"
             )}
           >
-            {notification.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-            {notification.msg}
+            {notification.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
+            <span>{notification.msg}</span>
           </motion.div>
         )}
       </AnimatePresence>
@@ -422,17 +423,17 @@ export default function WalletPage() {
         onViewChange={(view) => view === 'DASHBOARD' ? router.push('/') : router.push('/wallet')} 
       />
 
-      <main className="flex-1 max-w-4xl mx-auto px-4 py-8 w-full">
+      <main className="flex-1 max-w-4xl mx-auto px-4 sm:px-6 py-6 sm:py-8 w-full">
         {/* Balance Card */}
-        <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-8 text-white mb-8 shadow-xl">
-          <div className="flex items-center justify-between mb-4">
+        <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-6 sm:p-8 text-white mb-6 sm:mb-8 shadow-xl">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-4">
             <div className="flex items-center gap-3">
               <div className="p-3 bg-white/10 rounded-xl">
                 <Wallet className="w-8 h-8 text-blue-400" />
               </div>
               <div>
-                <p className="text-slate-400 text-sm">Available Balance</p>
-                <p className="text-4xl font-bold">{balance.toLocaleString()} <span className="text-xl text-blue-400">TLT</span></p>
+                <p className="text-slate-400 text-sm">Total Balance</p>
+                <p className="text-3xl sm:text-4xl font-bold">{balance.toLocaleString()} <span className="text-lg sm:text-xl text-blue-400">TLC</span></p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -451,28 +452,48 @@ export default function WalletPage() {
             </div>
           </div>
           
-          {/* Broker Info */}
-          {user?.email === 'broker@truelabel.com' && (
-            <div className="mt-4 p-4 bg-blue-900/30 border border-blue-700 rounded-xl">
-              <div className="flex items-center gap-2 text-blue-300">
-                <Coins className="w-5 h-5" />
-                <span className="font-bold">Broker Account</span>
+          {/* 🔑 Broker Badge */}
+          {isBroker && (
+            <div className="mb-4 p-4 bg-yellow-500/20 border border-yellow-500/30 rounded-xl flex items-center gap-3">
+              <Crown className="w-6 h-6 text-yellow-400" />
+              <div>
+                <p className="font-bold text-yellow-400">Broker Account</p>
+                <p className="text-xs text-yellow-300">You can distribute coins without restrictions</p>
               </div>
-              <p className="text-sm text-slate-300 mt-1">
-                You have 10,000,000 TLT to distribute. Generate gift codes to start the economy.
-              </p>
             </div>
           )}
           
-          <div className="flex gap-4 mt-6">
+          {/* Transferable Balance Summary */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 pt-4 border-t border-white/10">
+            <div className="bg-white/10 rounded-lg p-3 text-center">
+              <p className="text-xs text-slate-300">Locked (Base)</p>
+              <p className="text-lg font-bold text-slate-200">{baseBalance.toLocaleString()} TLC</p>
+            </div>
+            <div className={cn("rounded-lg p-3 text-center border", isBroker ? "bg-yellow-500/20 border-yellow-500/30" : "bg-green-500/20 border-green-500/30")}>
+              <p className="text-xs text-slate-300">{isBroker ? 'Available (Broker)' : 'Transferable (Earned)'}</p>
+              <p className="text-lg font-bold text-yellow-400">{transferableBalance.toLocaleString()} TLC</p>
+            </div>
+            <div className="bg-white/10 rounded-lg p-3 text-center">
+              <p className="text-xs text-slate-300">Daily Rate</p>
+              <p className="text-lg font-bold text-blue-400">{dailyRate.toLocaleString()} TLC/day</p>
+            </div>
+          </div>
+          
+          <p className="text-xs text-slate-400 mt-3 text-center sm:text-left">
+            {isBroker 
+              ? '💼 As broker, you can distribute any amount from your balance.'
+              : '💡 You can only transfer coins you have earned. Your initial redemption is locked.'}
+          </p>
+          
+          <div className="flex gap-3 sm:gap-4 mt-6">
             <button 
               onClick={() => router.push('/')}
-              className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-colors flex items-center justify-center gap-2"
+              className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-colors flex items-center justify-center gap-2 text-sm sm:text-base"
             >
               <TrendingUp className="w-5 h-5" />
               Earn More
             </button>
-            <button className="flex-1 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold transition-colors flex items-center justify-center gap-2">
+            <button className="flex-1 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold transition-colors flex items-center justify-center gap-2 text-sm sm:text-base">
               <Download className="w-5 h-5" />
               Export
             </button>
@@ -480,23 +501,39 @@ export default function WalletPage() {
         </div>
 
         {/* Transfer Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6 mb-6 sm:mb-8">
           {/* Generate Code */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2 bg-blue-50 rounded-lg">
                 <ArrowRightLeft className="w-5 h-5 text-blue-600" />
               </div>
-              <h2 className="text-lg font-bold text-slate-800">Send Gift</h2>
+              <h2 className="text-lg font-bold text-slate-800">
+                {isBroker ? 'Distribute Coins' : 'Send Gift'}
+              </h2>
             </div>
             <p className="text-sm text-slate-500 mb-4">
-              Create a code to gift TLT to another user. Code expires in 24 hours.
+              {isBroker 
+                ? 'Create a code to distribute TLC to users. No restrictions.'
+                : 'Create a code to gift earned TLC to another user.'}
             </p>
+            
+            <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
+              <p className="text-sm text-blue-700">
+                Available: <span className="font-bold">{transferableBalance.toLocaleString()} TLC</span>
+              </p>
+              {!isBroker && transferableBalance <= 0 && (
+                <p className="text-xs text-blue-600 mt-1">
+                  <Lock className="w-3 h-3 inline mr-1" />
+                  Redeem coins or complete tasks to earn transferable TLC.
+                </p>
+              )}
+            </div>
             
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Amount to Gift
+                  Amount
                 </label>
                 <div className="relative">
                   <input
@@ -504,12 +541,17 @@ export default function WalletPage() {
                     value={transferAmount}
                     onChange={(e) => setTransferAmount(e.target.value)}
                     placeholder="Enter amount"
-                    min="10"
-                    max={balance}
+                    min={isBroker ? 1 : 10}
+                    max={transferableBalance}
                     className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
                   />
-                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">TLT</span>
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 text-sm">TLC</span>
                 </div>
+                {transferAmount && parseInt(transferAmount) > transferableBalance && (
+                  <p className="text-xs text-red-600 mt-1">
+                    Cannot exceed {transferableBalance.toLocaleString()} TLC
+                  </p>
+                )}
               </div>
               
               {generatedCode && (
@@ -518,7 +560,9 @@ export default function WalletPage() {
                   animate={{ opacity: 1, y: 0 }}
                   className="p-4 bg-green-50 border border-green-200 rounded-xl"
                 >
-                  <p className="text-sm text-green-700 font-medium mb-2">Your Gift Code:</p>
+                  <p className="text-sm text-green-700 font-medium mb-2">
+                    {isBroker ? 'Distribution Code:' : 'Your Gift Code:'}
+                  </p>
                   <div className="flex items-center gap-2">
                     <code className="flex-1 text-lg font-mono font-bold text-green-800">{generatedCode}</code>
                     <button 
@@ -528,22 +572,21 @@ export default function WalletPage() {
                       <Copy className="w-5 h-5 text-green-600" />
                     </button>
                   </div>
-                  <p className="text-xs text-green-600 mt-2">Share this code with the recipient</p>
                 </motion.div>
               )}
               
               <button 
                 onClick={generateTransferCode}
-                disabled={!transferAmount || parseInt(transferAmount) <= 0}
-                className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!transferAmount || parseInt(transferAmount) <= 0 || parseInt(transferAmount) > transferableBalance}
+                className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
               >
-                Generate Code
+                {isBroker ? 'Generate Distribution Code' : 'Generate Code'}
               </button>
             </div>
           </div>
 
           {/* Redeem Code */}
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="p-2 bg-green-50 rounded-lg">
                 <CheckCircle className="w-5 h-5 text-green-600" />
@@ -551,7 +594,7 @@ export default function WalletPage() {
               <h2 className="text-lg font-bold text-slate-800">Redeem Gift</h2>
             </div>
             <p className="text-sm text-slate-500 mb-4">
-              Enter a code you received to claim TLT.
+              Enter a code to claim TLC. Redeemed coins are locked until you earn more.
             </p>
             
             <form onSubmit={redeemTransferCode} className="space-y-4">
@@ -563,20 +606,17 @@ export default function WalletPage() {
                   type="text"
                   value={redeemCode}
                   onChange={(e) => setRedeemCode(e.target.value)}
-                  placeholder="TL-XXXXXXXX"
+                  placeholder="TLC-XXXXXXXX"
                   className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none font-mono uppercase"
                 />
-                <p className="text-xs text-slate-400 mt-1">
-                  Tip: Codes are case-insensitive. No spaces allowed.
-                </p>
               </div>
               
               <button 
                 type="submit"
                 disabled={!redeemCode.trim()}
-                className="w-full py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                className="w-full py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm sm:text-base"
               >
-                Redeem TLT
+                Redeem TLC
               </button>
             </form>
           </div>
@@ -584,28 +624,23 @@ export default function WalletPage() {
 
         {/* Active Codes */}
         {transferCodes.length > 0 && (
-          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 mb-8">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6 mb-6 sm:mb-8">
             <div className="flex items-center gap-3 mb-4">
               <Clock className="w-5 h-5 text-slate-400" />
-              <h2 className="text-lg font-bold text-slate-800">Active Gift Codes</h2>
+              <h2 className="text-lg font-bold text-slate-800">
+                {isBroker ? 'Active Distribution Codes' : 'Active Gift Codes'}
+              </h2>
             </div>
             <div className="space-y-3">
               {transferCodes.map((code) => (
                 <div key={code.code} className="flex items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
                   <div>
                     <p className="font-mono font-bold text-slate-800">{code.code}</p>
-                    <p className="text-sm text-slate-500">
-                      Expires: {new Date(code.expires_at).toLocaleDateString()}
-                    </p>
+                    <p className="text-sm text-slate-500">Expires: {new Date(code.expires_at).toLocaleDateString()}</p>
                   </div>
                   <div className="text-right">
-                    <p className="font-bold text-blue-600">{code.amount} TLT</p>
-                    <button 
-                      onClick={() => copyToClipboard(code.code)}
-                      className="text-xs text-blue-600 hover:underline mt-1"
-                    >
-                      Copy Code
-                    </button>
+                    <p className="font-bold text-blue-600">{code.amount.toLocaleString()} TLC</p>
+                    <button onClick={() => copyToClipboard(code.code)} className="text-xs text-blue-600 hover:underline mt-1">Copy</button>
                   </div>
                 </div>
               ))}
@@ -614,7 +649,7 @@ export default function WalletPage() {
         )}
 
         {/* Transaction History */}
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-4 sm:p-6">
           <div className="flex items-center gap-3 mb-4">
             <History className="w-5 h-5 text-slate-400" />
             <h2 className="text-lg font-bold text-slate-800">Transaction History</h2>
@@ -624,39 +659,23 @@ export default function WalletPage() {
             <div className="text-center py-8 text-slate-400">
               <Coins className="w-12 h-12 mx-auto mb-3 opacity-50" />
               <p>No transactions yet</p>
-              <p className="text-sm mt-1">Receive TLT as a gift to get started</p>
             </div>
           ) : (
             <div className="space-y-3">
               {transactions.map((txn) => (
                 <div key={txn.id} className="flex items-center justify-between p-4 hover:bg-slate-50 rounded-lg transition-colors">
                   <div className="flex items-center gap-3">
-                    <div className={cn(
-                      "p-2 rounded-lg",
-                      txn.amount > 0 ? "bg-green-100" : "bg-red-100"
-                    )}>
-                      {txn.amount > 0 ? (
-                        <CheckCircle className="w-4 h-4 text-green-600" />
-                      ) : (
-                        <ArrowRightLeft className="w-4 h-4 text-red-600" />
-                      )}
+                    <div className={cn("p-2 rounded-lg", txn.amount > 0 ? "bg-green-100" : "bg-red-100")}>
+                      {txn.amount > 0 ? <CheckCircle className="w-4 h-4 text-green-600" /> : <ArrowRightLeft className="w-4 h-4 text-red-600" />}
                     </div>
                     <div>
                       <p className="font-medium text-slate-800">{txn.description}</p>
-                      <p className="text-xs text-slate-400">
-                        {new Date(txn.created_at).toLocaleString()}
-                      </p>
+                      <p className="text-xs text-slate-400">{new Date(txn.created_at).toLocaleString()}</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className={cn(
-                      "font-bold",
-                      txn.amount > 0 ? "text-green-600" : "text-red-600"
-                    )}>
-                      {txn.amount > 0 ? '+' : ''}{txn.amount.toLocaleString()} TLT
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      Balance: {txn.balance_after.toLocaleString()} TLT
+                    <p className={cn("font-bold", txn.amount > 0 ? "text-green-600" : "text-red-600")}>
+                      {txn.amount > 0 ? '+' : ''}{txn.amount.toLocaleString()} TLC
                     </p>
                   </div>
                 </div>
