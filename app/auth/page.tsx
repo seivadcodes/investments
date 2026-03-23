@@ -1,11 +1,12 @@
-// /app/auth/page.tsx
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
+import { ShieldCheck, Mail, Lock, User, AlertCircle, CheckCircle } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 
-const EMAIL_STORAGE_KEY = 'auth.email';
+const EMAIL_STORAGE_KEY = 'truelabel.auth.email';
 
 type CountryInfo = {
   country: string;
@@ -20,16 +21,14 @@ export default function AuthPage() {
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [userCountry, setUserCountry] = useState<string | null>(null);
 
-  // 🔁 REMOVED: No longer redirecting to /dashboard
-  // If you want to redirect elsewhere after auth, change '/journey' below:
+  // Redirect to dashboard after auth
   useEffect(() => {
     if (!loading && user) {
-      // Option 1: Stay on auth page (do nothing)
-      // Option 2: Redirect to journey page instead:
-      router.replace('/journey');
+      router.replace('/');
     }
   }, [user, loading, router]);
 
@@ -45,7 +44,7 @@ export default function AuthPage() {
     }
   }, [loading]);
 
-  // Fetch user's country on mount (non-blocking)
+  // Fetch user's country (non-blocking)
   useEffect(() => {
     const fetchCountry = async () => {
       try {
@@ -71,20 +70,21 @@ export default function AuthPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setSuccess('');
     setSubmitting(true);
 
     try {
       if (authMode === 'sign-in') {
         await signIn(email, password);
-        // After sign-in, you can optionally redirect:
-        // router.push('/journey');
+        setSuccess('Signed in successfully. Redirecting...');
       } else {
         if (!fullName.trim()) {
-          throw new Error('Please enter your name.');
+          throw new Error('Please enter your full name.');
         }
         await signUp(email, password, fullName.trim(), userCountry);
-        // After sign-up, you can optionally redirect:
-        // router.push('/journey');
+        setSuccess('Account created! Please check your email to verify.');
+        // Optional: auto sign in after sign up if your Supabase config allows
+        // await signIn(email, password);
       }
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -92,176 +92,208 @@ export default function AuthPage() {
       } else {
         setError('Authentication failed. Please try again.');
       }
+    } finally {
       setSubmitting(false);
     }
   };
 
   if (loading) {
     return (
-      <div style={{ padding: '2rem', textAlign: 'center', fontSize: '1.1rem' }}>
-        Checking your session...
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-8 h-8 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-slate-500">Initializing secure session...</p>
+        </div>
       </div>
     );
   }
 
-  // 🔁 If user is authenticated, you can either:
-  // - Show a success message
-  // - Redirect manually via button
-  // - Or just let them navigate freely
+  // If already authenticated, show a clean redirect state
   if (user) {
     return (
-      <div style={{ padding: '2rem', maxWidth: '400px', margin: '0 auto', textAlign: 'center' }}>
-        <h2 style={{ fontSize: '1.25rem', marginBottom: '1rem', color: '#16a34a' }}>
-          ✅ You're signed in!
-        </h2>
-        <button
-          onClick={() => router.push('/journey')}
-          style={{
-            padding: '0.75rem 1.5rem',
-            backgroundColor: '#4f46e5',
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            fontSize: '1rem',
-            fontWeight: '600',
-          }}
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <motion.div 
+          initial={{ scale: 0.95, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="bg-white p-8 rounded-2xl shadow-lg border border-slate-200 max-w-md w-full text-center"
         >
-          Continue to Journey
-        </button>
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <CheckCircle className="w-8 h-8 text-green-600" />
+          </div>
+          <h2 className="text-xl font-bold text-slate-800 mb-2">Authenticated</h2>
+          <p className="text-slate-500 mb-6">Redirecting to your dashboard...</p>
+          <button
+            onClick={() => router.push('/')}
+            className="w-full py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-colors"
+          >
+            Go to Dashboard Now
+          </button>
+        </motion.div>
       </div>
     );
   }
 
   return (
-    <div style={{ padding: '2rem', maxWidth: '400px', margin: '0 auto' }}>
-      <h1 style={{ fontSize: '1.5rem', marginBottom: '1rem' }}>
-        {authMode === 'sign-in' ? 'Welcome Back to Slimpossible' : 'Join Slimpossible'}
-      </h1>
-
-      {error && (
-        <div
-          style={{
-            color: 'red',
-            marginBottom: '1rem',
-            padding: '0.5rem',
-            backgroundColor: '#ffebee',
-            borderRadius: '4px',
-            fontSize: '0.9rem',
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit}>
-        {authMode === 'sign-up' && (
-          <div style={{ marginBottom: '1rem' }}>
-            <input
-              type="text"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="Full Name"
-              required
-              style={{
-                width: '100%',
-                padding: '0.75rem',
-                borderRadius: '6px',
-                border: '1px solid #ddd',
-                fontSize: '1rem',
-              }}
-            />
-          </div>
-        )}
-
-        <div style={{ marginBottom: '1rem' }}>
-          <input
-            type="email"
-            value={email}
-            onChange={handleEmailChange}
-            placeholder="Email"
-            required
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              borderRadius: '6px',
-              border: '1px solid #ddd',
-              fontSize: '1rem',
-            }}
-          />
-        </div>
-        <div style={{ marginBottom: '1rem' }}>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="Password (6+ characters)"
-            required
-            minLength={6}
-            style={{
-              width: '100%',
-              padding: '0.75rem',
-              borderRadius: '6px',
-              border: '1px solid #ddd',
-              fontSize: '1rem',
-            }}
-          />
-        </div>
-        <button
-          type="submit"
-          disabled={submitting}
-          style={{
-            width: '100%',
-            padding: '0.75rem',
-            backgroundColor: '#4f46e5',
-            color: 'white',
-            border: 'none',
-            borderRadius: '6px',
-            cursor: submitting ? 'not-allowed' : 'pointer',
-            opacity: submitting ? 0.9 : 1,
-            fontSize: '1rem',
-            fontWeight: '600',
-            transition: 'background-color 0.2s',
-          }}
-        >
-          {submitting
-            ? 'Processing...'
-            : authMode === 'sign-in'
-            ? 'Sign In'
-            : 'Create Account'}
-        </button>
-      </form>
-
-      <button
-        type="button"
-        onClick={() =>
-          setAuthMode(authMode === 'sign-in' ? 'sign-up' : 'sign-in')
-        }
-        style={{
-          marginTop: '1.25rem',
-          background: 'none',
-          border: 'none',
-          color: '#4f46e5',
-          cursor: 'pointer',
-          fontSize: '0.95rem',
-          fontWeight: '500',
-        }}
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <motion.div 
+        initial={{ y: 20, opacity: 0 }}
+        animate={{ y: 0, opacity: 1 }}
+        className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-md w-full overflow-hidden"
       >
-        {authMode === 'sign-in'
-          ? "Don't have an account? Sign up"
-          : 'Already have an account? Sign in'}
-      </button>
-      
-      {authMode === 'sign-up' && (
-        <p style={{ 
-          marginTop: '1rem', 
-          fontSize: '0.85rem', 
-          color: '#666',
-          fontStyle: 'italic'
-        }}>
-         
-        </p>
-      )}
+        {/* Header */}
+        <div className="bg-slate-900 p-6 text-center">
+          <div className="flex items-center justify-center gap-2 mb-2">
+            <ShieldCheck className="w-6 h-6 text-blue-400" />
+            <span className="text-xl font-bold text-white tracking-tight">TrueLabel</span>
+          </div>
+          <p className="text-slate-400 text-sm">
+            {authMode === 'sign-in' ? 'Welcome back, Contributor' : 'Join the verification network'}
+          </p>
+        </div>
+
+        {/* Form */}
+        <div className="p-6">
+          <AnimatePresence mode="wait">
+            {error && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2"
+              >
+                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{error}</p>
+              </motion.div>
+            )}
+            {success && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg flex items-start gap-2"
+              >
+                <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-green-700">{success}</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {authMode === 'sign-up' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  Full Name
+                </label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="John Doe"
+                    required
+                    className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Email Address
+              </label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  type="email"
+                  value={email}
+                  onChange={handleEmailChange}
+                  placeholder="you@example.com"
+                  required
+                  className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                Password
+              </label>
+              <div className="relative">
+                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required
+                  minLength={6}
+                  className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all"
+                />
+              </div>
+              <p className="text-xs text-slate-400 mt-1">Minimum 6 characters</p>
+            </div>
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className={cn(
+                "w-full py-3 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2",
+                submitting 
+                  ? "bg-slate-400 cursor-not-allowed" 
+                  : "bg-slate-900 hover:bg-slate-800 hover:shadow-lg"
+              )}
+            >
+              {submitting ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Processing...
+                </>
+              ) : authMode === 'sign-in' ? (
+                'Sign In to Dashboard'
+              ) : (
+                'Create Contributor Account'
+              )}
+            </button>
+          </form>
+
+          {/* Toggle Mode */}
+          <div className="mt-6 text-center">
+            <button
+              type="button"
+              onClick={() => {
+                setAuthMode(authMode === 'sign-in' ? 'sign-up' : 'sign-in');
+                setError('');
+                setSuccess('');
+              }}
+              className="text-sm text-blue-600 hover:text-blue-700 font-medium"
+            >
+              {authMode === 'sign-in'
+                ? "Don't have an account? Join TrueLabel"
+                : 'Already have an account? Sign in'}
+            </button>
+          </div>
+
+          {/* Trust Badges */}
+          <div className="mt-8 pt-6 border-t border-slate-100">
+            <p className="text-xs text-slate-400 text-center mb-3">
+              Secure • Encrypted • GDPR Compliant
+            </p>
+            <div className="flex items-center justify-center gap-4 text-xs text-slate-300">
+              <span>🔒 TLS 1.3</span>
+              <span>•</span>
+              <span>🛡️ SOC 2</span>
+              <span>•</span>
+              <span>✅ Verified</span>
+            </div>
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
+}
+
+// Helper for Tailwind class merging (if not already in your utils)
+function cn(...classes: (string | undefined | null | false)[]) {
+  return classes.filter(Boolean).join(' ');
 }
