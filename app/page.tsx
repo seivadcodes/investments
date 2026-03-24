@@ -36,8 +36,8 @@ export default function TrueLabelDashboard() {
   
   const [baseBalance, setBaseBalance] = useState(0);
   const [dailyBaseRate, setDailyBaseRate] = useState(0);
-  const [isBroker, setIsBroker] = useState(false); // 🔑 Added
-  const [transferAmount, setTransferAmount] = useState(''); // 🔑 Added
+  const [isBroker, setIsBroker] = useState(false);
+  const [transferAmount, setTransferAmount] = useState('');
   const [activeBatch, setActiveBatch] = useState<Batch | null>(null);
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [batchGuesses, setBatchGuesses] = useState<('AI' | 'REAL')[]>([]);
@@ -71,7 +71,7 @@ export default function TrueLabelDashboard() {
         
         if (response.error) throw response.error;
         
-        const profile = response.data; // ✅ FIX: Extract data
+        const profile = response.data;
         
         if (profile) {
           const balance = profile.wallet_balance || 0;
@@ -85,7 +85,7 @@ export default function TrueLabelDashboard() {
             rank: profile.rank || calculateRank(balance)
           });
           setBaseBalance(profile.base_balance || 0);
-          setIsBroker(profile.is_broker || false); // 🔑 Set broker flag
+          setIsBroker(profile.is_broker || false);
           setDailyBaseRate(profile.daily_earning_rate || calculatedDailyRate);
 
           const today = new Date().toISOString().split('T')[0];
@@ -158,7 +158,7 @@ export default function TrueLabelDashboard() {
 
       if (imagesResponse.error) throw imagesResponse.error;
 
-      const images = imagesResponse.data; // ✅ FIX: Extract data
+      const images = imagesResponse.data;
 
       if (!images || images.length === 0) {
         showNotification("No tasks available. Upload images first!", "error");
@@ -172,8 +172,8 @@ export default function TrueLabelDashboard() {
         stakeRequired: 0,
         maxReward: dailyBaseRate, 
         difficulty: 'Standard',
-        images: images.map((img: any) => img.image_url), // ✅ FIX: Add type
-        imageIds: images.map((img: any) => img.id) // ✅ FIX: Add type
+        images: images.map((img: any) => img.image_url),
+        imageIds: images.map((img: any) => img.id)
       };
 
       setActiveBatch(batch);
@@ -198,7 +198,7 @@ export default function TrueLabelDashboard() {
     }
   };
 
-  const handleSubmitBatch = (guesses: ('AI' | 'REAL')[]) => {
+  const handleSubmitBatch = async (guesses: ('AI' | 'REAL')[]) => {
     setView('PROCESSING');
     setProcessingTimeLeft(30);
 
@@ -207,6 +207,10 @@ export default function TrueLabelDashboard() {
       const correctCount = Math.floor((randomAccuracy / 100) * activeBatch!.imageCount);
       const finalReward = dailyBaseRate;
 
+      const newCredits = userStats.credits + finalReward;
+      const newRank = calculateRank(newCredits);
+      const newDailyRate = calculateDailyRate(newCredits);
+
       setBatchResult({ 
         correctCount, 
         totalCount: activeBatch!.imageCount, 
@@ -214,18 +218,36 @@ export default function TrueLabelDashboard() {
         accuracy: randomAccuracy
       });
 
-      const newCredits = userStats.credits + finalReward;
-      
+      // 🔑 UPDATE LOCAL STATE
       setUserStats(prev => ({
         ...prev,
         credits: newCredits,
         accuracy: ((prev.accuracy * prev.totalBatches) + randomAccuracy) / (prev.totalBatches + 1),
         totalBatches: prev.totalBatches + 1,
-        rank: calculateRank(newCredits)
+        rank: newRank
       }));
 
       const supabase = createClient();
       try {
+        // 🔑 SAVE TO DATABASE - This was missing!
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .update({
+            wallet_balance: newCredits,
+            daily_earning_rate: newDailyRate,
+            rank: newRank,
+            accuracy: ((userStats.accuracy * userStats.totalBatches) + randomAccuracy) / (userStats.totalBatches + 1),
+            total_batches: userStats.totalBatches + 1
+          })
+          .eq('id', user!.id);
+
+        if (profileError) {
+          console.error('Failed to save profile:', profileError);
+          showNotification('Failed to save earnings. Please contact support.', 'error');
+          return;
+        }
+
+        // Log completion
         await supabase.from('batch_completions').insert({
           user_id: user!.id,
           batch_id: activeBatch!.id,
@@ -234,6 +256,7 @@ export default function TrueLabelDashboard() {
           completed_at: new Date().toISOString()
         });
 
+        // Update image usage
         if (activeBatch?.imageIds) {
           await Promise.all(
             activeBatch.imageIds.map(id => 
@@ -241,8 +264,13 @@ export default function TrueLabelDashboard() {
             )
           );
         }
-      } catch (dbErr) {
+
+        // Update daily rate state
+        setDailyBaseRate(newDailyRate);
+      } catch (dbErr: any) {
         console.error("Failed to save completion:", dbErr);
+        showNotification('Failed to save progress. Please contact support.', 'error');
+        return;
       }
 
       setHasCompletedDailyBatch(true);
@@ -278,20 +306,42 @@ export default function TrueLabelDashboard() {
     return code;
   };
 
-  const redeemCode = (e: React.FormEvent, amount: number) => {
+  const redeemCode = async (e: React.FormEvent, amount: number) => {
     e.preventDefault();
-    const newCredits = userStats.credits + amount;
-    const newDailyRate = calculateDailyRate(newCredits);
     
-    setUserStats(prev => ({
-      ...prev,
-      credits: newCredits,
-      rank: calculateRank(newCredits)
-    }));
-    setBaseBalance(prev => prev + amount);
-    setDailyBaseRate(newDailyRate);
-    setTransferCode('');
-    showNotification(`${amount} TLC Received. Daily Rate: ${newDailyRate} TLC/day`, "success");
+    try {
+      const supabase = createClient();
+      const newCredits = userStats.credits + amount;
+      const newBaseBalance = baseBalance + amount;
+      const newDailyRate = calculateDailyRate(newCredits);
+      const newRank = calculateRank(newCredits);
+      
+      // 🔑 SAVE TO DATABASE
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({
+          wallet_balance: newCredits,
+          base_balance: newBaseBalance,
+          daily_earning_rate: newDailyRate,
+          rank: newRank
+        })
+        .eq('id', user!.id);
+
+      if (updateError) throw updateError;
+
+      setUserStats(prev => ({
+        ...prev,
+        credits: newCredits,
+        rank: newRank
+      }));
+      setBaseBalance(newBaseBalance);
+      setDailyBaseRate(newDailyRate);
+      setTransferCode('');
+      showNotification(`${amount} TLC Received. Daily Rate: ${newDailyRate} TLC/day`, "success");
+    } catch (err: any) {
+      console.error('Failed to redeem:', err);
+      showNotification('Failed to redeem code. Please try again.', 'error');
+    }
   };
 
   // 🔑 SHOW LOADING WHILE CHECKING AUTH
