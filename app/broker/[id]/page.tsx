@@ -4,9 +4,9 @@ import { useParams, useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeft, CheckCircle, AlertCircle, Copy, Clock, ShieldCheck,
-  DollarSign, Phone, MapPin, Star, Loader2, RefreshCw, MessageSquare,
-  Users, TrendingUp, XCircle, ChevronRight, Inbox, Zap, Coins,
-  History, FileText, ExternalLink
+  DollarSign, Phone, Star, Loader2, MessageSquare,
+  TrendingUp, XCircle, ChevronRight, Inbox, Coins,
+  History, FileText, Settings, Edit2, Save
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
@@ -31,7 +31,6 @@ interface BrokerDetails {
   max_amount: number;
   status: 'ACTIVE' | 'BUSY' | 'OFFLINE';
   rating: number;
-  location?: string;
   mpesa_number?: string;
   instructions?: string;
 }
@@ -42,6 +41,7 @@ interface Transaction {
   broker_id: string;
   type: TransactionType;
   amount: number;
+  user_mpesa_number?: string;
   user_provided_code: string | null;
   broker_generated_code: string | null;
   status: TxStatus;
@@ -67,17 +67,17 @@ export default function BrokerTradePage() {
   const [loading, setLoading] = useState(true);
   const [txType, setTxType] = useState<TransactionType>('BUY');
   const [amount, setAmount] = useState<string>('');
+  const [userMpesaNumber, setUserMpesaNumber] = useState('');
   const [userCode, setUserCode] = useState('');
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
   const [status, setStatus] = useState<TxStatus>('PENDING_PAYMENT');
   const [notification, setNotification] = useState<NotificationState | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(900);
   
-  // ✅ FIX: Track current active transaction ID for users
+  // Track current active transaction ID for users
   const [activeTransactionId, setActiveTransactionId] = useState<string | null>(null);
   
-  // ✅ FIX: User transaction history
+  // User transaction history
   const [userTransactions, setUserTransactions] = useState<Transaction[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   
@@ -87,6 +87,19 @@ export default function BrokerTradePage() {
   const [activeTab, setActiveTab] = useState<'PENDING' | 'COMPLETED'>('PENDING');
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [brokerCodeInput, setBrokerCodeInput] = useState('');
+  
+  // Broker Edit Mode
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editForm, setEditForm] = useState({
+    name: '',
+    mpesa_number: '',
+    buy_rate: 0,
+    sell_rate: 0,
+    min_amount: 0,
+    max_amount: 0,
+    status: 'ACTIVE' as 'ACTIVE' | 'BUSY' | 'OFFLINE',
+    instructions: ''
+  });
 
   // --- NOTIFICATION HELPER ---
   const showNotification = (msg: string, type: 'success' | 'error') => {
@@ -115,138 +128,139 @@ export default function BrokerTradePage() {
   };
 
   // --- FETCH BROKER DETAILS ---
- 
-// ✅ FIX: Add proper null checks in fetchBroker
-const fetchBroker = useCallback(async () => {
-  if (!brokerId) return;
-  
-  try {
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from('brokers')
-      .select('*')
-      .eq('id', brokerId)
-      .single();
-
-    if (error) throw error;
-
-    setBroker(data);
-    
-    // ✅ Check if user exists before checking ownership
-    if (user?.id && data?.user_id) {
-      if (data.user_id === user.id) {
-        setIsBrokerOwner(true);
-        fetchBrokerTransactions(data.id);
-      } else {
-        // ✅ Regular user - fetch their transactions with this broker
-        await fetchUserTransactions(brokerId);
-      }
-    }
-  } catch (err) {
-    console.error('Failed to load broker:', err);
-    showNotification('Broker not found', 'error');
-    router.push('/broker');
-  } finally {
-    setLoading(false);
-  }
-}, [brokerId, user, router]);  // ✅ Make sure user is in dependency array
-
- // ✅ FIX: Add proper null checks for user
-const fetchUserTransactions = async (brokerId: string) => {
-  // 🔑 Check if user exists before proceeding
-  if (!user?.id) {
-    console.warn('No user ID available for fetching transactions');
-    return;
-  }
-  
-  try {
-    const supabase = createClient();
-    const { data, error } = await supabase
-      .from('broker_transactions')
-      .select('*')
-      .eq('user_id', user.id)  // ✅ Safe now
-      .eq('broker_id', brokerId)
-      .order('created_at', { ascending: false })
-      .limit(20);
-
-    if (error) throw error;
-
-    setUserTransactions(data || []);
-
-    // Find any pending transaction to restore state
-    const pending = data?.find(tx => 
-      tx.status === 'PENDING_PAYMENT' || 
-      tx.status === 'PENDING_VERIFICATION'
-    );
-
-    if (pending) {
-      setActiveTransactionId(pending.id);
-      setStatus(pending.status as TxStatus);
-      if (pending.status === 'PENDING_VERIFICATION') {
-        setTimeLeft(0);
-      }
-      if (pending.status === 'COMPLETED' && pending.broker_generated_code) {
-        setGeneratedCode(pending.broker_generated_code);
-      }
-    }
-  } catch (err) {
-    console.error('Failed to fetch user transactions:', err);
-  }
-};
-  // --- FETCH BROKER TRANSACTIONS (For Broker Owner) ---
-  const fetchBrokerTransactions = async (brokerId: string) => {
+  const fetchBroker = useCallback(async () => {
+    if (!brokerId) return;
     try {
       const supabase = createClient();
+      const { data, error } = await supabase
+        .from('brokers')
+        .select('*')
+        .eq('id', brokerId)
+        .single();
+
+      if (error) throw error;
+
+      setBroker(data);
       
-      // Query 1: PENDING_PAYMENT
-      const { data: pendingPayment, error: error1 } = await supabase
-        .from('broker_transactions')
-        .select('*')
-        .eq('broker_id', brokerId)
-        .eq('status', 'PENDING_PAYMENT')
-        .order('created_at', { ascending: false });
-
-      // Query 2: PENDING_VERIFICATION
-      const { data: pendingVerification, error: error2 } = await supabase
-        .from('broker_transactions')
-        .select('*')
-        .eq('broker_id', brokerId)
-        .eq('status', 'PENDING_VERIFICATION')
-        .order('created_at', { ascending: false });
-
-      // Query 3: COMPLETED
-      const { data: completed, error: error3 } = await supabase
-        .from('broker_transactions')
-        .select('*')
-        .eq('broker_id', brokerId)
-        .eq('status', 'COMPLETED')
-        .order('completed_at', { ascending: false })
-        .limit(50);
-
-      // Combine pending transactions
-      const allPending = [
-        ...(pendingPayment || []),
-        ...(pendingVerification || [])
-      ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-      setPendingTransactions(allPending);
-      setCompletedTransactions(completed || []);
-
+      // Check if current user is the broker owner
+      if (user?.id && data?.user_id === user.id) {
+        setIsBrokerOwner(true);
+        setEditForm({
+          name: data.name,
+          mpesa_number: data.mpesa_number || '',
+          buy_rate: data.buy_rate,
+          sell_rate: data.sell_rate,
+          min_amount: data.min_amount,
+          max_amount: data.max_amount,
+          status: data.status,
+          instructions: data.instructions || ''
+        });
+        fetchBrokerTransactions(data.id);
+      } else {
+        // Regular users fetch their transaction history with this broker
+        fetchUserTransactions(brokerId);
+      }
     } catch (err) {
-      console.error('Failed to fetch transactions:', err);
-      showNotification('Failed to load transactions', 'error');
+      console.error('Failed to load broker:', err);
+      showNotification('Broker not found', 'error');
+      router.push('/broker');
+    } finally {
+      setLoading(false);
+    }
+  }, [brokerId, user, router]);
+
+  // Fetch user's transactions with this broker
+  const fetchUserTransactions = async (brokerId: string) => {
+    if (!user?.id) return;
+    
+    try {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from('broker_transactions')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('broker_id', brokerId)
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (error) throw error;
+
+      setUserTransactions(data || []);
+
+      // Find any pending transaction to restore state
+      const pending = data?.find(tx => 
+        tx.status === 'PENDING_PAYMENT' || 
+        tx.status === 'PENDING_VERIFICATION'
+      );
+
+      if (pending) {
+        setActiveTransactionId(pending.id);
+        setStatus(pending.status as TxStatus);
+        if (pending.status === 'COMPLETED' && pending.broker_generated_code) {
+          setGeneratedCode(pending.broker_generated_code);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to fetch user transactions:', err);
     }
   };
+
+  // --- FETCH BROKER TRANSACTIONS (For Broker Owner) ---
+  // Find and replace the fetchBrokerTransactions function with this:
+
+const fetchBrokerTransactions = async (brokerId: string) => {
+  try {
+    const supabase = createClient();
+    
+    // ✅ FIX: Destructure with 'data:' prefix for array responses
+    // Query 1: PENDING_PAYMENT
+    // ✅ CORRECT (actual fix)
+const { data: pendingPayment, error: error1 } = await supabase
+  .from('broker_transactions')
+  .select('*')
+  .eq('broker_id', brokerId)
+  .eq('status', 'PENDING_PAYMENT')
+  .order('created_at', { ascending: false });
+
+const { data: pendingVerification, error: error2 } = await supabase
+  .from('broker_transactions')
+  .select('*')
+  .eq('broker_id', brokerId)
+  .eq('status', 'PENDING_VERIFICATION')
+  .order('created_at', { ascending: false });
+
+const { data: completed, error: error3 } = await supabase
+  .from('broker_transactions')
+  .select('*')
+  .eq('broker_id', brokerId)
+  .eq('status', 'COMPLETED')
+  .order('completed_at', { ascending: false })
+  .limit(50);
+
+    // Combine pending transactions
+    const allPending = [
+      ...(pendingPayment || []),
+      ...(pendingVerification || [])
+    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+    setPendingTransactions(allPending);
+    setCompletedTransactions(completed || []);
+
+  } catch (err) {
+    console.error('Failed to fetch transactions:', err);
+    showNotification('Failed to load transactions', 'error');
+  }
+};
 
   useEffect(() => {
     fetchBroker();
   }, [fetchBroker]);
 
-  // ✅ FIX: Poll for transaction updates (For Users)
+  // Poll for transaction updates (For Users)
   useEffect(() => {
     let pollInterval: NodeJS.Timeout;
     
-    if (!isBrokerOwner && activeTransactionId && 
+    if (!isBrokerOwner && activeTransactionId && user?.id &&
         (status === 'PENDING_VERIFICATION' || status === 'PENDING_PAYMENT')) {
       pollInterval = setInterval(async () => {
         try {
@@ -269,42 +283,30 @@ const fetchUserTransactions = async (brokerId: string) => {
             } else if (data.status === 'DECLINED') {
               showNotification('Transaction was declined by broker', 'error');
             }
-            // Refresh history
-            fetchUserTransactions(brokerId);
+            await fetchUserTransactions(brokerId);
           }
         } catch (err) {
           console.error('Poll error:', err);
         }
-      }, 5000); // Poll every 5 seconds
+      }, 5000);
     }
 
     return () => clearInterval(pollInterval);
-  }, [isBrokerOwner, status, activeTransactionId, brokerId]);
+  }, [isBrokerOwner, status, activeTransactionId, brokerId, user]);
 
-  // --- TIMER FOR PAYMENT ---
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (status === 'PENDING_PAYMENT' && timeLeft > 0 && !isBrokerOwner && !activeTransactionId) {
-      timer = setInterval(() => setTimeLeft((prev) => prev - 1), 1000);
-    } else if (timeLeft === 0 && status === 'PENDING_PAYMENT' && !isBrokerOwner && !activeTransactionId) {
-      setStatus('CANCELLED');
-      showNotification('Transaction timed out', 'error');
-    }
-    return () => clearInterval(timer);
-  }, [status, timeLeft, isBrokerOwner, activeTransactionId]);
-
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  };
-
-  // --- USER: SUBMIT TRANSACTION (Amount + Code in ONE step) ---
+  // --- USER: SUBMIT TRANSACTION ---
   const handleSubmitTransaction = async () => {
     const numAmount = parseInt(amount);
     
     if (!amount || isNaN(numAmount) || numAmount <= 0) {
       showNotification('Please enter a valid amount', 'error');
+      return;
+    }
+    
+    // ✅ BUY: User needs broker's number (already shown), just needs Mpesa code
+    // ✅ SELL: User needs to enter THEIR number to receive payment
+    if (txType === 'SELL' && !userMpesaNumber.trim()) {
+      showNotification('Please enter your Mpesa number to receive payment', 'error');
       return;
     }
     
@@ -318,16 +320,22 @@ const fetchUserTransactions = async (brokerId: string) => {
       return;
     }
 
+    // Validate Mpesa number format for SELL
+    if (txType === 'SELL' && !/^07\d{8}$/.test(userMpesaNumber.replace(/\s/g, ''))) {
+      showNotification('Please enter a valid Mpesa number (e.g., 0712345678)', 'error');
+      return;
+    }
+
     setIsProcessing(true);
     try {
       const supabase = createClient();
       
-      // ✅ FIX: Create transaction WITH the code in ONE step
       const { data, error } = await supabase.from('broker_transactions').insert({
         broker_id: brokerId,
         user_id: user!.id,
         type: txType,
         amount: numAmount,
+        user_mpesa_number: txType === 'SELL' ? userMpesaNumber.replace(/\s/g, '') : null,
         user_provided_code: userCode,
         status: 'PENDING_VERIFICATION',
         created_at: new Date().toISOString()
@@ -338,10 +346,10 @@ const fetchUserTransactions = async (brokerId: string) => {
       setActiveTransactionId(data.id);
       setStatus('PENDING_VERIFICATION');
       setUserCode('');
+      setUserMpesaNumber('');
       setAmount('');
       
-      // Refresh history to show the new transaction
-      fetchUserTransactions(brokerId);
+      await fetchUserTransactions(brokerId);
       
       showNotification(
         txType === 'BUY' 
@@ -352,6 +360,40 @@ const fetchUserTransactions = async (brokerId: string) => {
     } catch (err: any) {
       console.error('Submit error:', err);
       showNotification(err.message || 'Failed to submit transaction', 'error');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  // --- BROKER: UPDATE PROFILE ---
+  const handleUpdateProfile = async () => {
+    setIsProcessing(true);
+    try {
+      const supabase = createClient();
+      const { error } = await supabase
+        .from('brokers')
+        .update({
+          name: editForm.name,
+          mpesa_number: editForm.mpesa_number,
+          buy_rate: editForm.buy_rate,
+          sell_rate: editForm.sell_rate,
+          min_amount: editForm.min_amount,
+          max_amount: editForm.max_amount,
+          status: editForm.status,
+          instructions: editForm.instructions,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', brokerId)
+        .eq('user_id', user!.id);
+
+      if (error) throw error;
+
+      setBroker(prev => prev ? { ...prev, ...editForm } : null);
+      setIsEditingProfile(false);
+      showNotification('Profile updated successfully!', 'success');
+      fetchBrokerTransactions(brokerId);
+    } catch (err: any) {
+      showNotification(err.message || 'Failed to update profile', 'error');
     } finally {
       setIsProcessing(false);
     }
@@ -492,6 +534,7 @@ const fetchUserTransactions = async (brokerId: string) => {
             <ArrowLeft className="w-4 h-4" /> Back to Brokers
           </button>
 
+          {/* Broker Profile Header */}
           <div className="bg-gradient-to-r from-blue-900 to-slate-900 rounded-2xl p-6 sm:p-8 text-white mb-6">
             <div className="flex items-center justify-between">
               <div>
@@ -507,6 +550,13 @@ const fetchUserTransactions = async (brokerId: string) => {
                   <span className={cn("px-3 py-1 rounded-full text-xs font-bold", broker.status === 'ACTIVE' ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400")}>
                     {broker.status}
                   </span>
+                  <button
+                    onClick={() => setIsEditingProfile(!isEditingProfile)}
+                    className="p-2 hover:bg-white/10 rounded-lg transition-colors"
+                    title="Edit Profile"
+                  >
+                    <Settings className="w-5 h-5" />
+                  </button>
                 </div>
                 <p className="text-slate-400 text-sm">Buy: KES {(BASE_TLC_RATE * broker.buy_rate).toFixed(0)} | Sell: KES {(BASE_TLC_RATE * broker.sell_rate).toFixed(0)}</p>
                 <p className="text-slate-500 text-xs mt-1">(Base Rate: 1 TLC = 100 KES)</p>
@@ -514,6 +564,130 @@ const fetchUserTransactions = async (brokerId: string) => {
             </div>
           </div>
 
+          {/* Broker Edit Profile Panel */}
+          <AnimatePresence>
+            {isEditingProfile && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                className="mb-6 overflow-hidden"
+              >
+                <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-slate-800 flex items-center gap-2">
+                      <Edit2 className="w-5 h-5 text-blue-600" />
+                      Edit Broker Profile
+                    </h3>
+                    <button onClick={() => setIsEditingProfile(false)} className="text-slate-400 hover:text-slate-600">
+                      <XCircle className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Broker Name</label>
+                      <input
+                        type="text"
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Mpesa Number (To Receive Payments)</label>
+                      <input
+                        type="text"
+                        value={editForm.mpesa_number}
+                        onChange={(e) => setEditForm({ ...editForm, mpesa_number: e.target.value })}
+                        placeholder="0712345678"
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Buy Rate (Multiplier)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editForm.buy_rate}
+                        onChange={(e) => setEditForm({ ...editForm, buy_rate: parseFloat(e.target.value) || 0 })}
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                      <p className="text-xs text-slate-400 mt-1">1 TLC = KES {(BASE_TLC_RATE * editForm.buy_rate).toFixed(0)}</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Sell Rate (Multiplier)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editForm.sell_rate}
+                        onChange={(e) => setEditForm({ ...editForm, sell_rate: parseFloat(e.target.value) || 0 })}
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                      <p className="text-xs text-slate-400 mt-1">1 TLC = KES {(BASE_TLC_RATE * editForm.sell_rate).toFixed(0)}</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Min Amount (TLC)</label>
+                      <input
+                        type="number"
+                        value={editForm.min_amount}
+                        onChange={(e) => setEditForm({ ...editForm, min_amount: parseInt(e.target.value) || 0 })}
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Max Amount (TLC)</label>
+                      <input
+                        type="number"
+                        value={editForm.max_amount}
+                        onChange={(e) => setEditForm({ ...editForm, max_amount: parseInt(e.target.value) || 0 })}
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+                      <select
+                        value={editForm.status}
+                        onChange={(e) => setEditForm({ ...editForm, status: e.target.value as any })}
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      >
+                        <option value="ACTIVE">Active</option>
+                        <option value="BUSY">Busy</option>
+                        <option value="OFFLINE">Offline</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Instructions</label>
+                      <input
+                        type="text"
+                        value={editForm.instructions}
+                        onChange={(e) => setEditForm({ ...editForm, instructions: e.target.value })}
+                        placeholder="Optional instructions for users"
+                        className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex gap-3 mt-6">
+                    <button
+                      onClick={handleUpdateProfile}
+                      disabled={isProcessing}
+                      className="px-6 py-3 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition-colors disabled:opacity-50 flex items-center gap-2"
+                    >
+                      {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : <Save className="w-5 h-5" />}
+                      Save Changes
+                    </button>
+                    <button
+                      onClick={() => setIsEditingProfile(false)}
+                      className="px-6 py-3 border border-slate-300 text-slate-700 font-bold rounded-xl hover:bg-slate-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Tabs */}
           <div className="flex gap-2 mb-6">
             <button
               onClick={() => setActiveTab('PENDING')}
@@ -537,6 +711,7 @@ const fetchUserTransactions = async (brokerId: string) => {
             </button>
           </div>
 
+          {/* Transaction List */}
           {activeTab === 'PENDING' && pendingTransactions.length === 0 ? (
             <div className="bg-white rounded-2xl border border-slate-200 p-12 text-center">
               <Inbox className="w-16 h-16 text-slate-300 mx-auto mb-4" />
@@ -585,13 +760,21 @@ const fetchUserTransactions = async (brokerId: string) => {
                           <span className="mx-2">•</span>
                           <span className="font-bold text-green-700">KES {calculateKES(tx.amount, tx.type).toLocaleString()}</span>
                         </p>
+                        {/* ✅ BUY: Show user's Mpesa code they sent */}
+                        {/* ✅ SELL: Show user's Mpesa number to send payment to */}
+                        {tx.type === 'SELL' && tx.user_mpesa_number && (
+                          <p className="text-xs text-slate-400 mt-1 flex items-center gap-1">
+                            <Phone className="w-3 h-3" />
+                            Send Payment To: {tx.user_mpesa_number}
+                          </p>
+                        )}
                         <p className="text-xs text-slate-400 mt-1">
                           {new Date(tx.created_at).toLocaleString()}
                         </p>
                       </div>
                     </div>
 
-                    {/* ✅ FIX: Different buttons based on status */}
+                    {/* Action Buttons */}
                     {activeTab === 'PENDING' && tx.status === 'PENDING_PAYMENT' && (
                       <div className="flex gap-2">
                         <button
@@ -611,7 +794,6 @@ const fetchUserTransactions = async (brokerId: string) => {
                       </div>
                     )}
 
-                    {/* ✅ FIX: Show Details button for COMPLETED/DECLINED, Complete for PENDING_VERIFICATION */}
                     {activeTab === 'PENDING' && tx.status === 'PENDING_VERIFICATION' && (
                       <button
                         onClick={() => setSelectedTx(tx)}
@@ -705,6 +887,13 @@ const fetchUserTransactions = async (brokerId: string) => {
                     <p className="text-xs text-slate-500">Transaction Details</p>
                     <p className="font-bold text-slate-800">{selectedTx.amount} TLC</p>
                     <p className="text-sm font-bold text-green-700">KES {calculateKES(selectedTx.amount, selectedTx.type).toLocaleString()}</p>
+                    {/* ✅ SELL: Show user's Mpesa number to send payment */}
+                    {selectedTx.type === 'SELL' && selectedTx.user_mpesa_number && (
+                      <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
+                        <Phone className="w-3 h-3" />
+                        Send To: {selectedTx.user_mpesa_number}
+                      </p>
+                    )}
                     <p className="text-xs text-slate-400 mt-2">
                       Created: {new Date(selectedTx.created_at).toLocaleString()}
                     </p>
@@ -830,8 +1019,10 @@ const fetchUserTransactions = async (brokerId: string) => {
               <div>
                 <h1 className="text-xl font-bold text-slate-800">{broker.name}</h1>
                 <div className="flex items-center gap-3 text-sm text-slate-500 mt-1">
-                  <span className="flex items-center gap-1"><MapPin className="w-3 h-3" /> {broker.location}</span>
                   <span className="flex items-center gap-1"><Star className="w-3 h-3 text-yellow-400 fill-yellow-400" /> {broker.rating}</span>
+                  <span className={cn("px-2 py-0.5 rounded-full text-xs font-bold", broker.status === 'ACTIVE' ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700")}>
+                    {broker.status}
+                  </span>
                 </div>
               </div>
             </div>
@@ -845,26 +1036,26 @@ const fetchUserTransactions = async (brokerId: string) => {
           {/* Toggle Buy/Sell */}
           <div className="grid grid-cols-2 gap-2 bg-slate-100 p-1 rounded-xl mb-4">
             <button
-              onClick={() => { setTxType('BUY'); setStatus('PENDING_PAYMENT'); setAmount(''); setUserCode(''); setGeneratedCode(null); setTimeLeft(900); }}
+              onClick={() => { setTxType('BUY'); setStatus('PENDING_PAYMENT'); setAmount(''); setUserCode(''); setUserMpesaNumber(''); setGeneratedCode(null); }}
               className={cn("py-2.5 rounded-lg text-sm font-bold transition-all", txType === 'BUY' ? "bg-white text-blue-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
             >
               Buy TLC (Send Mpesa)
             </button>
             <button
-              onClick={() => { setTxType('SELL'); setStatus('PENDING_PAYMENT'); setAmount(''); setUserCode(''); setGeneratedCode(null); setTimeLeft(900); }}
+              onClick={() => { setTxType('SELL'); setStatus('PENDING_PAYMENT'); setAmount(''); setUserCode(''); setUserMpesaNumber(''); setGeneratedCode(null); }}
               className={cn("py-2.5 rounded-lg text-sm font-bold transition-all", txType === 'SELL' ? "bg-white text-green-600 shadow-sm" : "text-slate-500 hover:text-slate-700")}
             >
-              Sell TLC (Send Code)
+              Sell TLC (Get Mpesa)
             </button>
           </div>
 
           <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 text-sm text-blue-800 flex gap-3">
             <MessageSquare className="w-5 h-5 flex-shrink-0" />
-            <p>{broker.instructions || "Paste your code and wait for the broker to verify. Transactions are irreversible once confirmed."}</p>
+            <p>{broker.instructions || "Complete the form below and wait for the broker to verify. Transactions are irreversible once confirmed."}</p>
           </div>
         </div>
 
-        {/* ✅ FIX: Show active/pending transaction if exists */}
+        {/* Show active/pending transaction if exists */}
         {activeTransactionId && status !== 'PENDING_PAYMENT' && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 mb-6">
             <div className="flex items-center justify-between mb-4">
@@ -908,7 +1099,7 @@ const fetchUserTransactions = async (brokerId: string) => {
           </div>
         )}
 
-        {/* ✅ FIX: Transaction History Button */}
+        {/* Transaction History Button */}
         {userTransactions.length > 0 && (
           <button
             onClick={() => setShowHistory(!showHistory)}
@@ -923,7 +1114,7 @@ const fetchUserTransactions = async (brokerId: string) => {
           </button>
         )}
 
-        {/* ✅ FIX: Transaction History Panel */}
+        {/* Transaction History Panel */}
         <AnimatePresence>
           {showHistory && userTransactions.length > 0 && (
             <motion.div
@@ -987,7 +1178,7 @@ const fetchUserTransactions = async (brokerId: string) => {
             {status === 'COMPLETED' || status === 'DECLINED' || status === 'CANCELLED' ? (
               <div className="p-6 sm:p-8 text-center">
                 <button
-                  onClick={() => {setStatus('PENDING_PAYMENT'); setAmount(''); setUserCode(''); setGeneratedCode(null); setActiveTransactionId(null); setTimeLeft(900);}}
+                  onClick={() => {setStatus('PENDING_PAYMENT'); setAmount(''); setUserCode(''); setUserMpesaNumber(''); setGeneratedCode(null);}}
                   className="text-blue-600 font-bold hover:underline mb-4"
                 >
                   Start New Transaction
@@ -1031,16 +1222,38 @@ const fetchUserTransactions = async (brokerId: string) => {
                   </div>
                 )}
 
-                {/* Mpesa Number Display (for BUY) */}
+                {/* ✅ BUY: Show BROKER's Mpesa number (user sends money TO broker) */}
                 {txType === 'BUY' && amount && parseInt(amount) > 0 && (
                   <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                    <p className="text-sm text-blue-700 mb-2">Send Mpesa to:</p>
+                    <p className="text-sm text-blue-700 font-medium mb-2">Send Mpesa Payment To:</p>
                     <div className="flex items-center justify-between">
-                      <span className="text-lg font-bold text-blue-800">{broker.mpesa_number}</span>
-                      <button onClick={() => copyToClipboard(broker.mpesa_number!)} className="text-blue-600 hover:bg-blue-100 p-2 rounded">
-                        <Copy className="w-4 h-4"/>
+                      <span className="text-lg font-bold text-blue-800">{broker.mpesa_number || 'Not set'}</span>
+                      <button onClick={() => copyToClipboard(broker.mpesa_number || '')} className="text-blue-600 hover:bg-blue-100 p-2 rounded">
+                        <Copy className="w-5 h-5" />
                       </button>
                     </div>
+                    <p className="text-xs text-blue-600 mt-2">
+                      Amount: KES {calculateKES(parseInt(amount), txType).toLocaleString()}
+                    </p>
+                  </div>
+                )}
+
+                {/* ✅ SELL: User enters THEIR Mpesa number (broker sends money TO user) */}
+                {txType === 'SELL' && amount && parseInt(amount) > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      Your Mpesa Number <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={userMpesaNumber}
+                      onChange={(e) => setUserMpesaNumber(e.target.value)}
+                      placeholder="0712345678"
+                      className="w-full px-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 outline-none"
+                    />
+                    <p className="text-xs text-slate-400 mt-1">
+                      Broker will send KES {calculateKES(parseInt(amount), txType).toLocaleString()} to this number
+                    </p>
                   </div>
                 )}
 
@@ -1071,7 +1284,7 @@ const fetchUserTransactions = async (brokerId: string) => {
 
                 <button
                   onClick={handleSubmitTransaction}
-                  disabled={isProcessing || !amount || !userCode}
+                  disabled={isProcessing || !amount || !userCode || (txType === 'SELL' && !userMpesaNumber)}
                   className="w-full py-4 bg-green-600 text-white font-bold rounded-xl hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                 >
                   {isProcessing ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Submit & Wait for Verification'}
