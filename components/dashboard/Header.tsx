@@ -1,11 +1,18 @@
 'use client';
-
 import { useState, useEffect, useRef } from 'react';
-import { ShieldCheck, Menu, X, ChevronDown, LogOut, Settings, Wallet, User } from 'lucide-react';
-import ProfileDropdown from './ProfileDropdown';
+import { ShieldCheck, Menu, X, ChevronDown, LogOut, Settings, Wallet, Users } from 'lucide-react';
 import { ViewState } from './DashboardViews';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
+
+// 🔑 ADD YOUR AUTHORIZED BROKER EMAILS HERE
+const BROKER_AUTHORIZED_EMAILS = [
+  'antonellahellen@outlook.com',
+  'kelly27ben@gmail.com',
+  'fahamu@gmail.com',
+  'abu@gmail.com',
+  // Add more emails as needed
+];
 
 type HeaderProps = {
   user: any;
@@ -19,6 +26,9 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const mobileMenuRef = useRef<HTMLDivElement>(null);
+  
+  // 🔑 Check if user is authorized to see Broker navigation
+  const isBrokerAuthorized = user?.email && BROKER_AUTHORIZED_EMAILS.includes(user.email);
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -50,8 +60,15 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
     return name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2);
   };
 
+  // ✅ FIX: Proper navigation handler
   const handleNavClick = (view: ViewState) => {
-    onViewChange(view);
+    if (view === 'WALLET') {
+      window.location.href = '/wallet';
+    } else if (view === 'BROKER') {
+      window.location.href = '/broker';
+    } else {
+      onViewChange(view);
+    }
     setMobileMenuOpen(false);
   };
 
@@ -60,8 +77,8 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
       <div className="max-w-6xl mx-auto px-4 sm:px-6">
         <div className="h-16 flex items-center justify-between">
           {/* Logo - Left */}
-          <div 
-            className="flex items-center gap-2 cursor-pointer flex-shrink-0" 
+          <div
+            className="flex items-center gap-2 cursor-pointer flex-shrink-0"
             onClick={() => handleNavClick('DASHBOARD')}
           >
             <div className="bg-blue-600 p-1.5 sm:p-2 rounded-lg">
@@ -74,19 +91,19 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
 
           {/* Desktop Navigation - Center/Right */}
           <div className="hidden md:flex items-center gap-6">
-            <button 
-              onClick={() => handleNavClick('DASHBOARD')} 
+            <button
+              onClick={() => handleNavClick('DASHBOARD')}
               className={cn(
                 "text-sm font-medium transition-colors",
                 ['DASHBOARD', 'WORK', 'PROCESSING', 'RESULTS'].includes(currentView)
-                  ? "text-blue-600" 
+                  ? "text-blue-600"
                   : "text-slate-500 hover:text-slate-800"
               )}
             >
               Dashboard
             </button>
-            <button 
-              onClick={() => handleNavClick('WALLET')} 
+            <button
+              onClick={() => handleNavClick('WALLET')}
               className={cn(
                 "text-sm font-medium transition-colors",
                 currentView === 'WALLET' ? "text-blue-600" : "text-slate-500 hover:text-slate-800"
@@ -94,6 +111,20 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
             >
               Wallet
             </button>
+            
+            {/* 🔑 Broker Navigation - Only for Authorized Emails */}
+            {isBrokerAuthorized && (
+              <button
+                onClick={() => handleNavClick('BROKER')}
+                className={cn(
+                  "text-sm font-medium transition-colors flex items-center gap-1",
+                  currentView === 'BROKER' ? "text-blue-600" : "text-slate-500 hover:text-slate-800"
+                )}
+              >
+                <Users className="w-4 h-4" />
+                Broker
+              </button>
+            )}
             
             <div className="h-6 w-px bg-slate-200" />
             
@@ -115,7 +146,6 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                   profileDropdownOpen && "rotate-180"
                 )} />
               </button>
-
               <AnimatePresence>
                 {profileDropdownOpen && (
                   <motion.div
@@ -128,20 +158,28 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                       <p className="text-sm font-medium text-slate-800">{getDisplayName()}</p>
                       <p className="text-xs text-slate-400 truncate">{user?.email}</p>
                     </div>
-                    
                     <button className="w-full px-4 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 flex items-center gap-2">
                       <Settings className="w-4 h-4" />
                       Account Settings
                     </button>
-                    
                     <button className="w-full px-4 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 flex items-center gap-2">
                       <Wallet className="w-4 h-4" />
                       View Transactions
                     </button>
                     
-                    <div className="border-t border-slate-100 my-2" />
+                    {/* 🔑 Show Broker Dashboard link in dropdown for authorized users */}
+                    {isBrokerAuthorized && (
+                      <button 
+                        onClick={() => handleNavClick('BROKER')}
+                        className="w-full px-4 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                      >
+                        <Users className="w-4 h-4" />
+                        Broker Dashboard
+                      </button>
+                    )}
                     
-                    <button 
+                    <div className="border-t border-slate-100 my-2" />
+                    <button
                       onClick={async () => {
                         await onSignOut();
                         setProfileDropdownOpen(false);
@@ -167,7 +205,6 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
               >
                 {getInitials()}
               </button>
-
               <AnimatePresence>
                 {profileDropdownOpen && (
                   <motion.div
@@ -180,20 +217,28 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                       <p className="text-sm font-medium text-slate-800">{getDisplayName()}</p>
                       <p className="text-xs text-slate-400 truncate">{user?.email}</p>
                     </div>
-                    
                     <button className="w-full px-4 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 flex items-center gap-2">
                       <Settings className="w-4 h-4" />
                       Account Settings
                     </button>
-                    
                     <button className="w-full px-4 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 flex items-center gap-2">
                       <Wallet className="w-4 h-4" />
                       View Transactions
                     </button>
                     
-                    <div className="border-t border-slate-100 my-2" />
+                    {/* 🔑 Mobile Broker Link in Dropdown */}
+                    {isBrokerAuthorized && (
+                      <button 
+                        onClick={() => handleNavClick('BROKER')}
+                        className="w-full px-4 py-2 text-left text-sm text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                      >
+                        <Users className="w-4 h-4" />
+                        Broker Dashboard
+                      </button>
+                    )}
                     
-                    <button 
+                    <div className="border-t border-slate-100 my-2" />
+                    <button
                       onClick={async () => {
                         await onSignOut();
                         setProfileDropdownOpen(false);
@@ -207,7 +252,7 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                 )}
               </AnimatePresence>
             </div>
-
+            
             {/* Hamburger Menu Button */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -235,12 +280,12 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
               className="md:hidden border-t border-slate-200 bg-white overflow-hidden"
             >
               <div className="px-4 py-4 space-y-2">
-                <button 
-                  onClick={() => handleNavClick('DASHBOARD')} 
+                <button
+                  onClick={() => handleNavClick('DASHBOARD')}
                   className={cn(
                     "w-full text-left px-4 py-3 rounded-lg font-medium transition-colors",
                     ['DASHBOARD', 'WORK', 'PROCESSING', 'RESULTS'].includes(currentView)
-                      ? "bg-blue-50 text-blue-600" 
+                      ? "bg-blue-50 text-blue-600"
                       : "text-slate-600 hover:bg-slate-50"
                   )}
                 >
@@ -249,13 +294,12 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                     <span>Dashboard</span>
                   </div>
                 </button>
-                
-                <button 
-                  onClick={() => handleNavClick('WALLET')} 
+                <button
+                  onClick={() => handleNavClick('WALLET')}
                   className={cn(
                     "w-full text-left px-4 py-3 rounded-lg font-medium transition-colors",
-                    currentView === 'WALLET' 
-                      ? "bg-blue-50 text-blue-600" 
+                    currentView === 'WALLET'
+                      ? "bg-blue-50 text-blue-600"
                       : "text-slate-600 hover:bg-slate-50"
                   )}
                 >
@@ -264,7 +308,25 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                     <span>Wallet</span>
                   </div>
                 </button>
-
+                
+                {/* 🔑 Mobile Broker Menu Item - Only for Authorized */}
+                {isBrokerAuthorized && (
+                  <button
+                    onClick={() => handleNavClick('BROKER')}
+                    className={cn(
+                      "w-full text-left px-4 py-3 rounded-lg font-medium transition-colors",
+                      currentView === 'BROKER'
+                        ? "bg-blue-50 text-blue-600"
+                        : "text-slate-600 hover:bg-slate-50"
+                    )}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Users className="w-5 h-5" />
+                      <span>Broker Hub</span>
+                    </div>
+                  </button>
+                )}
+                
                 <div className="pt-4 border-t border-slate-200 mt-4">
                   <div className="flex items-center gap-3 px-4 py-3">
                     <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold">
@@ -275,8 +337,7 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                       <p className="text-xs text-slate-400 truncate">{user?.email}</p>
                     </div>
                   </div>
-                  
-                  <button 
+                  <button
                     onClick={async () => {
                       await onSignOut();
                       setMobileMenuOpen(false);

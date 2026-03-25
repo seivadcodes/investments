@@ -9,7 +9,7 @@ import {
 import { cn } from '@/lib/utils';
 
 // --- TYPES ---
-export type ViewState = 'DASHBOARD' | 'WORK' | 'PROCESSING' | 'RESULTS' | 'WALLET';
+export type ViewState = 'DASHBOARD' | 'WORK' | 'PROCESSING' | 'RESULTS' | 'WALLET' | 'BROKER';
 export type Rank = 'Silver' | 'Gold' | 'Platinum';
 
 export interface Batch {
