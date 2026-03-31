@@ -1,441 +1,554 @@
 'use client';
-
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { CheckCircle, AlertCircle } from 'lucide-react';
+import {
+  Activity, Wallet, Users, Server, ShieldCheck,
+  TrendingUp, Gift, Loader2, CheckCircle, AlertCircle, RefreshCw,
+  Coins, Clock
+} from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
+import { createClient } from '@/lib/supabase';
 import Header from '@/components/dashboard/Header';
 import Footer from '@/components/dashboard/Footer';
-import {
-  ViewState,
-  Batch,
-  UserState,
-  BatchResult,
-  DashboardView,
-  WorkView,
-  ProcessingView,
-  ResultsView,
-  WalletView
-} from '@/components/dashboard/DashboardViews';
-import { createClient } from '@/lib/supabase';
 
-export default function TrueLabelDashboard() {
+// Import the two consolidated components
+import { InvestmentInterface, ServerInstance } from '@/components/investor/InvestmentInterface';
+import { NetworkInterface } from '@/components/investor/NetworkInterface';
+
+// ============================================
+// TYPES
+// ============================================
+type MainTab = 'OVERVIEW' | 'INVESTMENT' | 'NETWORK';
+
+interface ReferralStats {
+  totalReferrals: number;
+  activeReferrals: number;
+  totalEarnings: number;
+}
+
+interface NotificationState {
+  msg: string;
+  type: 'success' | 'error' | 'info';
+}
+
+// ============================================
+// MAIN PAGE COMPONENT
+// ============================================
+export default function InvestorDashboardPage() {
   const { user, loading: authLoading, signOut } = useAuth();
   const router = useRouter();
-  
-  const [view, setView] = useState<ViewState>('DASHBOARD');
-  const [userStats, setUserStats] = useState<UserState>({
-    credits: 0,
-    staked: 0,
-    accuracy: 95.0,
-    totalBatches: 0,
-    rank: 'Silver'
-  });
-  
-  const [baseBalance, setBaseBalance] = useState(0);
-  const [dailyBaseRate, setDailyBaseRate] = useState(0);
-  const [isBroker, setIsBroker] = useState(false);
-  const [transferAmount, setTransferAmount] = useState('');
-  const [activeBatch, setActiveBatch] = useState<Batch | null>(null);
-  const [currentImageIndex, setCurrentImageIndex] = useState(0);
-  const [batchGuesses, setBatchGuesses] = useState<('AI' | 'REAL')[]>([]);
-  const [processingTimeLeft, setProcessingTimeLeft] = useState(30);
-  const [batchResult, setBatchResult] = useState<BatchResult | null>(null);
-  const [transferCode, setTransferCode] = useState<string>('');
-  const [notification, setNotification] = useState<{msg: string, type: 'success' | 'error'} | null>(null);
-  const [loaded, setLoaded] = useState(false);
-  const [hasCompletedDailyBatch, setHasCompletedDailyBatch] = useState(false);
-  const [isFetchingBatch, setIsFetchingBatch] = useState(false);
 
-  // 🔑 REDIRECT TO AUTH IF NOT LOGGED IN
+  // Global State
+  const [activeTab, setActiveTab] = useState<MainTab>('OVERVIEW');
+  const [balance, setBalance] = useState<number>(0);
+  const [dailyEarnings, setDailyEarnings] = useState<number>(0);
+  const [servers, setServers] = useState<ServerInstance[]>([]);
+  const [installingServers, setInstallingServers] = useState<ServerInstance[]>([]);
+  const [referralCode, setReferralCode] = useState<string>('');
+  const [referralStats, setReferralStats] = useState<ReferralStats>({
+    totalReferrals: 0,
+    activeReferrals: 0,
+    totalEarnings: 0
+  });
+  const [providers, setProviders] = useState<any[]>([]);
+  const [notification, setNotification] = useState<NotificationState | null>(null);
+  const [isRenting, setIsRenting] = useState(false);
+  
+  // Loading states for individual sections (non-blocking)
+  const [loadingBalance, setLoadingBalance] = useState(true);
+  const [loadingServers, setLoadingServers] = useState(true);
+  const [loadingReferrals, setLoadingReferrals] = useState(true);
+  const [loadingProviders, setLoadingProviders] = useState(true);
+
+  // Refs for realtime updates to avoid stale closures
+  const balanceRef = useRef(balance);
+  const serversRef = useRef(servers);
+  const referralStatsRef = useRef(referralStats);
+
+  useEffect(() => {
+    balanceRef.current = balance;
+    serversRef.current = servers;
+    referralStatsRef.current = referralStats;
+  }, [balance, servers, referralStats]);
+
+  // 🔑 REDIRECT IF NOT LOGGED IN
   useEffect(() => {
     if (!authLoading && !user) {
       router.replace('/auth');
     }
   }, [user, authLoading, router]);
 
+  // ============================================
+  // REALTIME BALANCE SYNC (Independent, non-blocking)
+  // ============================================
   useEffect(() => {
-    const fetchUserProfile = async () => {
-      if (!user?.id) return;
-      
-      try {
-        const supabase = createClient();
-        
-        const response = await supabase
-          .from('profiles')
-          .select('wallet_balance, base_balance, is_broker, accuracy, total_batches, rank, daily_earning_rate')
-          .eq('id', user.id)
-          .single();
-        
-        if (response.error) throw response.error;
-        
-        const profile = response.data;
-        
-        if (profile) {
-          const balance = profile.wallet_balance || 0;
-          const calculatedDailyRate = calculateDailyRate(balance);
-          
-          setUserStats({
-            credits: balance,
-            staked: 0,
-            accuracy: profile.accuracy || 95.0,
-            totalBatches: profile.total_batches || 0,
-            rank: profile.rank || calculateRank(balance)
-          });
-          setBaseBalance(profile.base_balance || 0);
-          setIsBroker(profile.is_broker || false);
-          setDailyBaseRate(profile.daily_earning_rate || calculatedDailyRate);
-
-          const today = new Date().toISOString().split('T')[0];
-          const batchesResponse = await supabase
-            .from('batch_completions')
-            .select('id')
-            .eq('user_id', user.id)
-            .gte('completed_at', `${today}T00:00:00`)
-            .limit(1);
-
-          if (!batchesResponse.error && batchesResponse.data && batchesResponse.data.length > 0) {
-            setHasCompletedDailyBatch(true);
+    if (!user?.id) return;
+    const supabase = createClient();
+    
+    const channel = supabase
+      .channel(`balance-${user.id}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'profiles',
+          filter: `id=eq.${user.id}`
+        },
+        (payload) => {
+          if (payload.new?.wallet_balance !== undefined) {
+            setBalance(payload.new.wallet_balance);
           }
         }
-      } catch (err) {
-        console.warn('Could not fetch profile:', err);
-      } finally {
-        setLoaded(true);
-      }
-    };
+      )
+      .subscribe();
     
-    fetchUserProfile();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id]);
+
+  // ============================================
+  // FETCH DATA FROM SUPABASE (Non-blocking, like WalletPage)
+  // ============================================
+  const fetchDashboardData = useCallback(async () => {
+    if (!user?.id) return;
+    
+    try {
+      const supabase = createClient();
+
+      // 1. Profile & Balance (CRITICAL - fetch first)
+      setLoadingBalance(true);
+      const profileRes = await supabase
+        .from('profiles')
+        .select('wallet_balance, referral_code, is_broker')
+        .eq('id', user.id)
+        .single();
+      
+      if (profileRes.data) {
+        const newBalance = profileRes.data.wallet_balance || 0;
+        setBalance(newBalance);
+        balanceRef.current = newBalance;
+        setReferralCode(profileRes.data.referral_code || `REF-${user.id.substring(0, 6).toUpperCase()}`);
+      }
+      setLoadingBalance(false);
+
+      // 2. Active Servers (fetch async, non-blocking)
+      setLoadingServers(true);
+      const serversRes = await supabase
+        .from('server_instances')
+        .select('*')
+        .eq('user_id', user.id)
+        .in('status', ['ONLINE', 'INSTALLING'])
+        .order('created_at', { ascending: false });
+      
+      if (serversRes.data) {
+        const online = serversRes.data.filter((s: any) => s.status === 'ONLINE');
+        const installing = serversRes.data.filter((s: any) => s.status === 'INSTALLING');
+        setServers(online);
+        serversRef.current = online;
+        setInstallingServers(installing);
+        const dailyTotal = online.reduce((sum: number, s: any) => sum + (s.daily_earnings || 0), 0);
+        setDailyEarnings(dailyTotal);
+      }
+      setLoadingServers(false);
+
+      // 3. Referral Stats (fetch async, non-blocking)
+      setLoadingReferrals(true);
+      const [refCountRes, refEarningsRes] = await Promise.allSettled([
+        supabase.from('referrals').select('id, status', { count: 'exact' }).eq('referrer_id', user.id),
+        supabase.from('referral_earnings').select('amount').eq('user_id', user.id)
+      ]);
+
+      let newReferralStats = { ...referralStatsRef.current };
+      
+      if (refCountRes.status === 'fulfilled' && refCountRes.value.data) {
+        newReferralStats.totalReferrals = refCountRes.value.data?.length || 0;
+        newReferralStats.activeReferrals = refCountRes.value.data?.filter((r: any) => r.status === 'ACTIVE').length || 0;
+      }
+      if (refEarningsRes.status === 'fulfilled' && refEarningsRes.value.data) {
+        const total = refEarningsRes.value.data.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
+        newReferralStats.totalEarnings = total;
+      }
+      setReferralStats(newReferralStats);
+      referralStatsRef.current = newReferralStats;
+      setLoadingReferrals(false);
+
+      // 4. Providers (fetch async, non-blocking)
+      setLoadingProviders(true);
+      const providersRes = await supabase
+        .from('brokers')
+        .select('id, name, status, rating, total_trades, mpesa_number')
+        .in('status', ['ACTIVE', 'BUSY'])
+        .limit(10);
+      
+      if (providersRes.data) {
+        setProviders(providersRes.data);
+      }
+      setLoadingProviders(false);
+
+    } catch (err) {
+      console.error('Dashboard fetch error:', err);
+      // ✅ Allow UI to render even if some fetches fail
+      setLoadingBalance(false);
+      setLoadingServers(false);
+      setLoadingReferrals(false);
+      setLoadingProviders(false);
+    }
   }, [user]);
 
-  const calculateRank = (balance: number): 'Silver' | 'Gold' | 'Platinum' => {
-    if (balance >= 10000) return 'Platinum';
-    if (balance >= 1000) return 'Gold';
-    return 'Silver';
-  };
+  // Initial fetch - runs after auth confirms user
+  useEffect(() => {
+    if (user?.id) {
+      fetchDashboardData();
+    }
+  }, [user, fetchDashboardData]);
 
-  const calculateDailyRate = (balance: number): number => {
-    if (balance <= 0) return 0;
-    return Math.floor(balance / 20);
-  };
-
-  const showNotification = (msg: string, type: 'success' | 'error') => {
+  // ============================================
+  // ACTIONS (REAL DB WRITES)
+  // ============================================
+  const showNotification = (msg: string, type: 'success' | 'error' | 'info') => {
     setNotification({ msg, type });
-    setTimeout(() => setNotification(null), 3000);
+    setTimeout(() => setNotification(null), 4000);
   };
 
-  const getTransferableBalance = () => {
-    if (isBroker) return userStats.credits;
-    return Math.max(0, userStats.credits - baseBalance);
-  };
-
-  const fetchNewBatch = async () => {
-    if (!user?.id) return;
-
-    if (userStats.credits <= 0) {
-      showNotification("You need TLC balance to access tasks. Go to Wallet to redeem coins.", "error");
+  // 🔑 RENT SERVER - SAVES TO DATABASE
+  const handleRentServer = async (investment: number) => {
+    if (!user?.id) {
+      showNotification('Please log in to rent a server', 'error');
+      router.push('/auth');
       return;
     }
     
-    if (hasCompletedDailyBatch) {
-      showNotification("Daily task already completed!", "error");
+    // Balance Check (use ref for latest value)
+    if (investment > balanceRef.current) {
+      showNotification(`Insufficient TLC. You have ${balanceRef.current} TLC, need ${investment} TLC.`, 'error');
+      setTimeout(() => router.push('/wallet'), 1500);
       return;
     }
-
-    setIsFetchingBatch(true);
-
+    
+    setIsRenting(true);
     try {
       const supabase = createClient();
+      const dailyEarnings = Math.floor(investment * 0.05 * 10) / 10; // 5% daily
       
-      const imagesResponse = await supabase
-        .from('verification_images')
-        .select('id, image_url')
-        .eq('is_active', true)
-        .order('used_count', { ascending: true }) 
-        .limit(5);
+      const { data: serverData, error: insertError } = await supabase
+        .from('server_instances')
+        .insert({
+          user_id: user.id,
+          investment,
+          daily_earnings: dailyEarnings,
+          status: 'INSTALLING',
+          total_earned: 0,
+          cpu_cores: Math.floor(investment / 100) + 1,
+          ram_gb: Math.floor(investment / 50) + 2,
+          storage_gb: Math.floor(investment / 10) + 20
+        })
+        .select()
+        .single();
+      
+      if (insertError) throw insertError;
+      if (!serverData) throw new Error('No server data returned');
 
-      if (imagesResponse.error) throw imagesResponse.error;
+      // Deduct balance in database
+      const newBalance = balanceRef.current - investment;
+      await supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', user.id);
 
-      const images = imagesResponse.data;
-
-      if (!images || images.length === 0) {
-        showNotification("No tasks available. Upload images first!", "error");
-        setIsFetchingBatch(false);
-        return;
-      }
-
-      const batch: Batch = {
-        id: `B-${Date.now()}`,
-        imageCount: images.length,
-        stakeRequired: 0,
-        maxReward: dailyBaseRate, 
-        difficulty: 'Standard',
-        images: images.map((img: any) => img.image_url),
-        imageIds: images.map((img: any) => img.id)
-      };
-
-      setActiveBatch(batch);
-      setCurrentImageIndex(0);
-      setBatchGuesses([]);
-      setView('WORK');
-    } catch (err: any) {
-      console.error("Failed to load batch:", err);
-      showNotification(err.message || "Failed to load batch", "error");
-    } finally {
-      setIsFetchingBatch(false);
-    }
-  };
-
-  const submitImageGuess = (guess: 'AI' | 'REAL') => {
-    const newGuesses = [...batchGuesses, guess];
-    setBatchGuesses(newGuesses);
-    if (currentImageIndex < (activeBatch!.imageCount - 1)) {
-      setCurrentImageIndex(prev => prev + 1);
-    } else {
-      handleSubmitBatch(newGuesses);
-    }
-  };
-
-  const handleSubmitBatch = async (guesses: ('AI' | 'REAL')[]) => {
-    setView('PROCESSING');
-    setProcessingTimeLeft(30);
-
-    setTimeout(async () => {
-      const randomAccuracy = Math.floor(Math.random() * 21) + 80;
-      const correctCount = Math.floor((randomAccuracy / 100) * activeBatch!.imageCount);
-      const finalReward = dailyBaseRate;
-
-      const newCredits = userStats.credits + finalReward;
-      const newRank = calculateRank(newCredits);
-      const newDailyRate = calculateDailyRate(newCredits);
-
-      setBatchResult({ 
-        correctCount, 
-        totalCount: activeBatch!.imageCount, 
-        reward: finalReward, 
-        accuracy: randomAccuracy
+      // Log transaction
+      await supabase.from('wallet_transactions').insert({
+        user_id: user.id,
+        type: 'STAKE',
+        amount: -investment,
+        balance_after: newBalance,
+        description: `Server Rental Investment (${investment} TLC)`
       });
 
-      // 🔑 UPDATE LOCAL STATE
-      setUserStats(prev => ({
-        ...prev,
-        credits: newCredits,
-        accuracy: ((prev.accuracy * prev.totalBatches) + randomAccuracy) / (prev.totalBatches + 1),
-        totalBatches: prev.totalBatches + 1,
-        rank: newRank
-      }));
+      // Update local state for UI
+      setBalance(newBalance);
+      balanceRef.current = newBalance;
+      setInstallingServers(prev => [...prev, { 
+        ...serverData, 
+        specs: { 
+          cpu: Math.floor(investment / 100) + 1, 
+          ram: Math.floor(investment / 50) + 2, 
+          storage: Math.floor(investment / 10) + 20 
+        } 
+      }]);
+      showNotification('Server provisioning started...', 'info');
 
-      const supabase = createClient();
-      try {
-        // 🔑 SAVE TO DATABASE - This was missing!
-        const { error: profileError } = await supabase
-          .from('profiles')
-          .update({
-            wallet_balance: newCredits,
-            daily_earning_rate: newDailyRate,
-            rank: newRank,
-            accuracy: ((userStats.accuracy * userStats.totalBatches) + randomAccuracy) / (userStats.totalBatches + 1),
-            total_batches: userStats.totalBatches + 1
-          })
-          .eq('id', user!.id);
-
-        if (profileError) {
-          console.error('Failed to save profile:', profileError);
-          showNotification('Failed to save earnings. Please contact support.', 'error');
-          return;
+      // Simulate installation (15 seconds) then update database to 'ONLINE'
+      setTimeout(async () => {
+        try {
+          await supabase
+            .from('server_instances')
+            .update({ status: 'ONLINE' })
+            .eq('id', serverData.id);
+          
+          setInstallingServers(prev => prev.filter(s => s.id !== serverData.id));
+          await fetchDashboardData(); // Refresh from DB
+          showNotification('Server Online! Earnings started.', 'success');
+        } catch (updateErr) {
+          console.error('Failed to update server status:', updateErr);
+          showNotification('Server rented but status update failed', 'error');
         }
+      }, 15000);
 
-        // Log completion
-        await supabase.from('batch_completions').insert({
-          user_id: user!.id,
-          batch_id: activeBatch!.id,
-          accuracy: randomAccuracy,
-          reward_earned: finalReward,
-          completed_at: new Date().toISOString()
-        });
-
-        // Update image usage
-        if (activeBatch?.imageIds) {
-          await Promise.all(
-            activeBatch.imageIds.map(id => 
-              supabase.rpc('increment_image_usage', { img_id: id })
-            )
-          );
-        }
-
-        // Update daily rate state
-        setDailyBaseRate(newDailyRate);
-      } catch (dbErr: any) {
-        console.error("Failed to save completion:", dbErr);
-        showNotification('Failed to save progress. Please contact support.', 'error');
-        return;
-      }
-
-      setHasCompletedDailyBatch(true);
-      setView('RESULTS');
-    }, 30000);
+    } catch (err: any) {
+      console.error('Rent server error:', err);
+      showNotification(err.message || 'Failed to rent server', 'error');
+    } finally {
+      setIsRenting(false);
+    }
   };
 
-  useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (view === 'PROCESSING' && processingTimeLeft > 0) {
-      timer = setInterval(() => setProcessingTimeLeft(prev => prev - 1), 1000);
+  // 🔑 WITHDRAW EARNINGS
+  const handleWithdraw = async (serverId: string) => {
+    if (!user?.id) {
+      showNotification('Please log in', 'error');
+      return;
     }
-    return () => clearInterval(timer);
-  }, [view, processingTimeLeft]);
 
-  const generateTransferCode = (amount: number): string | null => {
-    const transferable = getTransferableBalance();
-    if (!amount || amount <= 0) {
-      showNotification("Please enter a valid amount", "error");
-      return null;
-    }
-    if (amount > transferable) {
-      showNotification(`You can only transfer earned coins. Available: ${transferable} TLC`, "error");
-      return null;
-    }
-    if (!isBroker && amount < 10) {
-      showNotification("Minimum transfer is 10 TLC", "error");
-      return null;
-    }
-    const code = 'TLC-' + Math.random().toString(36).substr(2, 9).toUpperCase();
-    setTransferCode(code);
-    showNotification("Code generated.", "success");
-    return code;
-  };
-
-  const redeemCode = async (e: React.FormEvent, amount: number) => {
-    e.preventDefault();
+    const server = serversRef.current.find(s => s.id === serverId);
+    if (!server || server.total_earned <= 0) return;
     
     try {
       const supabase = createClient();
-      const newCredits = userStats.credits + amount;
-      const newBaseBalance = baseBalance + amount;
-      const newDailyRate = calculateDailyRate(newCredits);
-      const newRank = calculateRank(newCredits);
       
-      // 🔑 SAVE TO DATABASE
-      const { error: updateError } = await supabase
-        .from('profiles')
-        .update({
-          wallet_balance: newCredits,
-          base_balance: newBaseBalance,
-          daily_earning_rate: newDailyRate,
-          rank: newRank
-        })
-        .eq('id', user!.id);
+      // Reset server earnings
+      await supabase.from('server_instances').update({ total_earned: 0 }).eq('id', serverId);
+      
+      // Add to wallet
+      const newBalance = balanceRef.current + server.total_earned;
+      await supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', user.id);
+      
+      // Log transaction
+      await supabase.from('wallet_transactions').insert({
+        user_id: user.id,
+        type: 'EARN',
+        amount: server.total_earned,
+        balance_after: newBalance,
+        description: `Server Earnings Withdrawal (${server.investment} TLC node)`
+      });
 
-      if (updateError) throw updateError;
-
-      setUserStats(prev => ({
-        ...prev,
-        credits: newCredits,
-        rank: newRank
-      }));
-      setBaseBalance(newBaseBalance);
-      setDailyBaseRate(newDailyRate);
-      setTransferCode('');
-      showNotification(`${amount} TLC Received. Daily Rate: ${newDailyRate} TLC/day`, "success");
-    } catch (err: any) {
-      console.error('Failed to redeem:', err);
-      showNotification('Failed to redeem code. Please try again.', 'error');
+      setBalance(newBalance);
+      balanceRef.current = newBalance;
+      setServers(prev => prev.map(s => s.id === serverId ? { ...s, total_earned: 0 } : s));
+      serversRef.current = serversRef.current.map(s => s.id === serverId ? { ...s, total_earned: 0 } : s);
+      
+      showNotification(`Withdrew ${server.total_earned} TLC`, 'success');
+      fetchDashboardData();
+    } catch (err) {
+      showNotification('Withdrawal failed', 'error');
     }
   };
 
-  // 🔑 SHOW LOADING WHILE CHECKING AUTH
-  if (authLoading || !loaded) {
+  const copyReferralCode = () => {
+    navigator.clipboard.writeText(referralCode);
+    showNotification('Referral code copied!', 'success');
+  };
+
+  const handleRefresh = () => {
+    fetchDashboardData();
+    showNotification('Refreshing dashboard...', 'info');
+  };
+
+  // ============================================
+  // AUTH LOADING ONLY (No isInitialized gate)
+  // ============================================
+  if (authLoading || !user) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-slate-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-slate-500 text-sm sm:text-base">Loading workspace...</p>
+          <Loader2 className="w-12 h-12 animate-spin text-blue-600 mx-auto mb-4" />
+          <p className="text-slate-500">Loading dashboard...</p>
         </div>
       </div>
     );
   }
 
-  // 🔑 REDIRECT HAPPENS IN useEffect, but show nothing while redirecting
-  if (!user) {
-    return null;
-  }
-
+  // ============================================
+  // RENDER (Always renders after auth, with available data)
+  // ============================================
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
+      {/* Notification Toast */}
       <AnimatePresence>
         {notification && (
-          <motion.div 
+          <motion.div
             initial={{ y: -50, opacity: 0 }}
             animate={{ y: 0, opacity: 1 }}
             exit={{ y: -50, opacity: 0 }}
             className={cn(
-              "fixed top-4 right-4 left-4 sm:left-auto sm:w-auto z-50 px-4 sm:px-6 py-3 rounded-lg shadow-lg font-bold text-sm flex items-center gap-2 max-w-sm",
-              notification.type === 'success' ? "bg-green-600 text-white" : "bg-red-600 text-white"
+              "fixed top-4 right-4 z-50 px-6 py-3 rounded-lg shadow-lg font-bold text-sm flex items-center gap-2 max-w-sm",
+              notification.type === 'success' ? "bg-green-600 text-white" :
+              notification.type === 'error' ? "bg-red-600 text-white" : "bg-blue-600 text-white"
             )}
           >
             {notification.type === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
-            <span>{notification.msg}</span>
+            {notification.msg}
           </motion.div>
         )}
       </AnimatePresence>
 
-      <Header 
-        user={user} 
-        onSignOut={signOut} 
-        currentView={view} 
+      <Header
+        user={user}
+        onSignOut={signOut}
+        currentView="DASHBOARD"
         onViewChange={(v) => {
           if (v === 'WALLET') router.push('/wallet');
-          else setView(v as ViewState);
-        }} 
+          if (v === 'BROKER') router.push('/broker');
+        }}
       />
 
-      <main className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 py-6 sm:py-8 w-full">
+      <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 py-6 w-full">
+        {/* Global Stats Header - Shows balance immediately */}
+        <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-6 text-white mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-bold">Server Investment Dashboard</h1>
+              <p className="text-slate-400 text-sm mt-1">Rent servers, earn TLC, grow your network</p>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="text-right">
+                <p className="text-slate-400 text-xs">Balance</p>
+                {loadingBalance ? (
+                  <div className="h-8 w-24 bg-white/20 rounded animate-pulse" />
+                ) : (
+                  <p className="text-2xl font-bold text-green-400">{balance.toLocaleString()} TLC</p>
+                )}
+              </div>
+              <button onClick={handleRefresh} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
+                <RefreshCw className="w-5 h-5" />
+              </button>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-white/10">
+            <div className="text-center">
+              <p className="text-xs text-slate-400">Daily Income</p>
+              {loadingServers ? (
+                <div className="h-6 w-16 bg-white/20 rounded animate-pulse mx-auto mt-1" />
+              ) : (
+                <p className="text-lg font-bold text-green-400">+{dailyEarnings.toFixed(1)} TLC</p>
+              )}
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-slate-400">Active Servers</p>
+              {loadingServers ? (
+                <div className="h-6 w-8 bg-white/20 rounded animate-pulse mx-auto mt-1" />
+              ) : (
+                <p className="text-lg font-bold">{servers.length}</p>
+              )}
+            </div>
+            <div className="text-center">
+              <p className="text-xs text-slate-400">Referral Earnings</p>
+              {loadingReferrals ? (
+                <div className="h-6 w-20 bg-white/20 rounded animate-pulse mx-auto mt-1" />
+              ) : (
+                <p className="text-lg font-bold text-purple-400">{referralStats.totalEarnings.toFixed(1)} TLC</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Main Tabs */}
+        <div className="flex gap-2 mb-6 overflow-x-auto">
+          {[
+            { id: 'OVERVIEW', label: 'Overview', icon: Activity },
+            { id: 'INVESTMENT', label: 'Servers & Rent', icon: Server },
+            { id: 'NETWORK', label: 'Referrals & Providers', icon: Users }
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id as MainTab)}
+              className={cn(
+                "px-6 py-3 rounded-xl font-bold transition-all flex items-center gap-2 whitespace-nowrap",
+                activeTab === tab.id
+                  ? "bg-slate-900 text-white shadow-lg"
+                  : "bg-white text-slate-600 border border-slate-200 hover:bg-slate-50"
+              )}
+            >
+              <tab.icon className="w-4 h-4" />
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Tab Content */}
         <AnimatePresence mode="wait">
-          <motion.div key={view} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
-            {view === 'DASHBOARD' && (
-              <DashboardView 
-                userStats={userStats} 
-                onStartBatch={fetchNewBatch}
-                currency="TLC"
-                dailyRate={dailyBaseRate}
-                hasCompletedToday={hasCompletedDailyBatch}
-                isLoading={isFetchingBatch}
+          <motion.div
+            key={activeTab}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-6"
+          >
+            {activeTab === 'OVERVIEW' && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-2xl p-8 text-white">
+                  <h2 className="text-2xl font-bold mb-2">Start Earning Today</h2>
+                  <p className="text-blue-100 mb-6">Rent server capacity with any amount of TLC and earn 5% daily returns.</p>
+                  <button 
+                    onClick={() => setActiveTab('INVESTMENT')} 
+                    className="px-6 py-3 bg-white text-blue-600 font-bold rounded-xl hover:bg-blue-50 transition-colors flex items-center gap-2"
+                  >
+                    Rent Server <TrendingUp className="w-4 h-4" />
+                  </button>
+                </div>
+                <div className="bg-white rounded-2xl border border-slate-200 p-6">
+                  <h3 className="font-bold text-slate-800 mb-4">Quick Actions</h3>
+                  <div className="space-y-3">
+                    <button onClick={() => setActiveTab('INVESTMENT')} className="w-full p-4 bg-slate-50 rounded-xl flex items-center justify-between hover:bg-slate-100">
+                      <span className="font-medium">Rent New Server</span>
+                      <Server className="w-5 h-5 text-blue-600" />
+                    </button>
+                    <button onClick={() => setActiveTab('NETWORK')} className="w-full p-4 bg-slate-50 rounded-xl flex items-center justify-between hover:bg-slate-100">
+                      <span className="font-medium">Invite Friends</span>
+                      <Users className="w-5 h-5 text-green-600" />
+                    </button>
+                    <button onClick={() => router.push('/wallet')} className="w-full p-4 bg-slate-50 rounded-xl flex items-center justify-between hover:bg-slate-100">
+                      <span className="font-medium">Manage Wallet</span>
+                      <Wallet className="w-5 h-5 text-purple-600" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {activeTab === 'INVESTMENT' && (
+              <InvestmentInterface
+                balance={balance}
+                onRent={handleRentServer}
+                servers={servers}
+                installingServers={installingServers}
+                onWithdraw={handleWithdraw}
+                isRenting={isRenting}
+                isLoading={loadingServers}
               />
             )}
-            {view === 'WORK' && activeBatch && (
-              <WorkView 
-                activeBatch={activeBatch} 
-                currentImageIndex={currentImageIndex} 
-                onGuess={submitImageGuess}
-                currency="TLC"
-                potentialReward={dailyBaseRate}
-              />
-            )}
-            {view === 'PROCESSING' && <ProcessingView timeLeft={processingTimeLeft} currency="TLC" />}
-            {view === 'RESULTS' && (
-              <ResultsView 
-                batchResult={batchResult} 
-                activeBatch={activeBatch} 
-                onReturn={() => setView('DASHBOARD')}
-                currency="TLC"
-              />
-            )}
-            {view === 'WALLET' && (
-              <WalletView 
-                transferCode={transferCode} 
-                onGenerateCode={generateTransferCode} 
-                onRedeemCode={redeemCode}
-                totalBalance={userStats.credits}
-                baseBalance={baseBalance}
-                transferableBalance={getTransferableBalance()}
-                currency="TLC"
-                dailyRate={dailyBaseRate}
+
+            {activeTab === 'NETWORK' && (
+              <NetworkInterface
+                referralCode={referralCode}
+                referralStats={referralStats}
+                providers={providers}
+                onCopyCode={copyReferralCode}
+                isLoading={loadingReferrals || loadingProviders}
               />
             )}
           </motion.div>
         </AnimatePresence>
+
+        {/* Loading indicator for background fetches */}
+        {(loadingServers || loadingReferrals || loadingProviders) && (
+          <div className="fixed bottom-4 right-4 bg-slate-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm flex items-center gap-2 z-40">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span>Updating data...</span>
+          </div>
+        )}
       </main>
+
       <Footer />
     </div>
   );
