@@ -4,7 +4,7 @@ import { motion } from 'framer-motion';
 import {
   Users, Gift, Share2, Copy, CheckCircle,
   Network, ShieldCheck, Star, MapPin, TrendingUp, Award,
-  Phone, DollarSign, Link2, Download, Loader2
+  Phone, DollarSign, Link2, Download
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -22,7 +22,6 @@ interface NetworkInterfaceProps {
   referralStats: ReferralStats;
   providers: any[];
   onCopyCode: () => void;
-  isLoading?: boolean; // ← NEW: Loading state for non-blocking fetches
 }
 
 // ============================================
@@ -82,84 +81,19 @@ const ReferralPanel = ({ code, stats, onCopy }: { code: string, stats: ReferralS
 );
 
 // ============================================
-// INTERNAL: ReferralSkeleton
-// ============================================
-const ReferralSkeleton = () => (
-  <div className="space-y-6 animate-pulse">
-    <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-2xl p-6">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <div className="w-6 h-6 bg-white/20 rounded" />
-          <div className="h-5 w-40 bg-white/20 rounded" />
-        </div>
-        <div className="w-8 h-8 bg-white/20 rounded" />
-      </div>
-      <div className="h-4 w-full bg-white/20 rounded mb-2" />
-      <div className="h-4 w-2/3 bg-white/20 rounded mb-6" />
-      <div className="bg-white/10 rounded-xl p-4">
-        <div className="h-3 w-32 bg-white/20 rounded mb-2" />
-        <div className="flex items-center gap-2">
-          <div className="flex-1 h-8 bg-white/20 rounded" />
-          <div className="w-10 h-10 bg-white/20 rounded" />
-        </div>
-      </div>
-    </div>
-    <div className="grid grid-cols-3 gap-4">
-      {[1, 2, 3].map(i => (
-        <div key={i} className="bg-white p-4 rounded-xl border border-slate-200 text-center">
-          <div className="w-6 h-6 bg-slate-200 rounded mx-auto mb-2" />
-          <div className="h-6 w-12 bg-slate-200 rounded mx-auto mb-1" />
-          <div className="h-3 w-10 bg-slate-200 rounded mx-auto" />
-        </div>
-      ))}
-    </div>
-    <div className="bg-white p-6 rounded-2xl border border-slate-200">
-      <div className="h-5 w-32 bg-slate-200 rounded mb-4" />
-      <div className="space-y-3">
-        {[1, 2, 3].map(i => (
-          <div key={i} className="h-12 bg-slate-100 rounded-xl" />
-        ))}
-      </div>
-    </div>
-  </div>
-);
-
-// ============================================
 // INTERNAL: ProviderList
 // ============================================
-const ProviderList = ({ providers, isLoading }: { providers: any[], isLoading?: boolean }) => (
+const ProviderList = ({ providers }: { providers: any[] }) => (
   <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
     <div className="p-6 border-b border-slate-100">
       <div className="flex items-center gap-2"><Network className="w-5 h-5 text-blue-600" /><h3 className="text-lg font-bold text-slate-800">Node Provider Network</h3></div>
       <p className="text-sm text-slate-500 mt-1">Verified infrastructure partners hosting your servers</p>
     </div>
-    
-    {isLoading ? (
-      <div className="divide-y divide-slate-100 animate-pulse">
-        {[1, 2, 3].map(i => (
-          <div key={i} className="p-4 flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 bg-slate-200 rounded-full" />
-              <div>
-                <div className="h-4 w-32 bg-slate-200 rounded mb-2" />
-                <div className="flex gap-2">
-                  <div className="h-4 w-16 bg-slate-200 rounded" />
-                  <div className="h-4 w-12 bg-slate-200 rounded" />
-                </div>
-              </div>
-            </div>
-            <div className="text-right">
-              <div className="h-4 w-16 bg-slate-200 rounded mb-1" />
-              <div className="h-3 w-20 bg-slate-200 rounded" />
-            </div>
-          </div>
-        ))}
-      </div>
-    ) : providers.length === 0 ? (
-      <div className="p-8 text-center text-slate-500">No providers available</div>
-    ) : (
-      <div className="divide-y divide-slate-100">
-        {providers.map((provider) => (
+    <div className="divide-y divide-slate-100">
+      {providers.length === 0 ? (
+        <div className="p-8 text-center text-slate-500">Loading providers...</div>
+      ) : (
+        providers.map((provider) => (
           <div key={provider.id} className="p-4 flex items-center justify-between hover:bg-slate-50">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 bg-slate-900 rounded-full flex items-center justify-center text-white font-bold">
@@ -179,10 +113,9 @@ const ProviderList = ({ providers, isLoading }: { providers: any[], isLoading?: 
               <p className="text-xs text-slate-400">Infrastructure</p>
             </div>
           </div>
-        ))}
-      </div>
-    )}
-    
+        ))
+      )}
+    </div>
     <div className="p-4 bg-slate-50 border-t border-slate-100 text-xs text-slate-500">
       <ShieldCheck className="w-4 h-4 inline mr-1" />
       All providers are verified. Real-money transactions happen off-platform via Mpesa.
@@ -193,13 +126,7 @@ const ProviderList = ({ providers, isLoading }: { providers: any[], isLoading?: 
 // ============================================
 // MAIN EXPORTED COMPONENT
 // ============================================
-export function NetworkInterface({ 
-  referralCode, 
-  referralStats, 
-  providers, 
-  onCopyCode,
-  isLoading = false // ← NEW: Default to false
-}: NetworkInterfaceProps) {
+export function NetworkInterface({ referralCode, referralStats, providers, onCopyCode }: NetworkInterfaceProps) {
   const [tab, setTab] = useState<'REFERRALS' | 'PROVIDERS'>('REFERRALS');
 
   return (
@@ -209,10 +136,8 @@ export function NetworkInterface({
         <button onClick={() => setTab('PROVIDERS')} className={cn("px-4 py-2 rounded-lg font-bold text-sm", tab === 'PROVIDERS' ? "bg-slate-900 text-white" : "bg-white border")}>Providers</button>
       </div>
 
-      {tab === 'REFERRALS' && (
-        isLoading ? <ReferralSkeleton /> : <ReferralPanel code={referralCode} stats={referralStats} onCopy={onCopyCode} />
-      )}
-      {tab === 'PROVIDERS' && <ProviderList providers={providers} isLoading={isLoading} />}
+      {tab === 'REFERRALS' && <ReferralPanel code={referralCode} stats={referralStats} onCopy={onCopyCode} />}
+      {tab === 'PROVIDERS' && <ProviderList providers={providers} />}
     </div>
   );
 }

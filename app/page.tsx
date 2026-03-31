@@ -1,11 +1,10 @@
 'use client';
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Activity, Wallet, Users, Server, ShieldCheck,
-  TrendingUp, Gift, Loader2, CheckCircle, AlertCircle, RefreshCw,
-  Coins, Clock
+  TrendingUp, Gift, Loader2, CheckCircle, AlertCircle, RefreshCw
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
@@ -42,11 +41,11 @@ export default function InvestorDashboardPage() {
 
   // Global State
   const [activeTab, setActiveTab] = useState<MainTab>('OVERVIEW');
-  const [balance, setBalance] = useState<number>(0);
-  const [dailyEarnings, setDailyEarnings] = useState<number>(0);
+  const [balance, setBalance] = useState(0);
+  const [dailyEarnings, setDailyEarnings] = useState(0);
   const [servers, setServers] = useState<ServerInstance[]>([]);
   const [installingServers, setInstallingServers] = useState<ServerInstance[]>([]);
-  const [referralCode, setReferralCode] = useState<string>('');
+  const [referralCode, setReferralCode] = useState('');
   const [referralStats, setReferralStats] = useState<ReferralStats>({
     totalReferrals: 0,
     activeReferrals: 0,
@@ -55,23 +54,7 @@ export default function InvestorDashboardPage() {
   const [providers, setProviders] = useState<any[]>([]);
   const [notification, setNotification] = useState<NotificationState | null>(null);
   const [isRenting, setIsRenting] = useState(false);
-  
-  // Loading states for individual sections (non-blocking)
-  const [loadingBalance, setLoadingBalance] = useState(true);
-  const [loadingServers, setLoadingServers] = useState(true);
-  const [loadingReferrals, setLoadingReferrals] = useState(true);
-  const [loadingProviders, setLoadingProviders] = useState(true);
-
-  // Refs for realtime updates to avoid stale closures
-  const balanceRef = useRef(balance);
-  const serversRef = useRef(servers);
-  const referralStatsRef = useRef(referralStats);
-
-  useEffect(() => {
-    balanceRef.current = balance;
-    serversRef.current = servers;
-    referralStatsRef.current = referralStats;
-  }, [balance, servers, referralStats]);
+  const [isInitialized, setIsInitialized] = useState(false);
 
   // 🔑 REDIRECT IF NOT LOGGED IN
   useEffect(() => {
@@ -81,8 +64,90 @@ export default function InvestorDashboardPage() {
   }, [user, authLoading, router]);
 
   // ============================================
-  // REALTIME BALANCE SYNC (Independent, non-blocking)
+  // FETCH DATA FROM SUPABASE (REAL DB)
   // ============================================
+  const fetchDashboardData = useCallback(async () => {
+    if (!user?.id) return;
+    try {
+      const supabase = createClient();
+
+      // 1. Profile & Balance
+      const profileRes = await supabase
+        .from('profiles')
+        .select('wallet_balance, referral_code, is_broker')
+        .eq('id', user.id)
+        .single();
+      
+      if (profileRes.data) {
+        setBalance(profileRes.data.wallet_balance || 0);
+        setReferralCode(profileRes.data.referral_code || `REF-${user.id.substring(0, 6).toUpperCase()}`);
+      }
+
+      // 2. Active Servers (REAL DB FETCH)
+      const serversRes = await supabase
+        .from('server_instances')
+        .select('*')
+        .eq('user_id', user.id)
+        .in('status', ['ONLINE', 'INSTALLING'])
+        .order('created_at', { ascending: false });
+      
+      if (serversRes.data) {
+        const online = serversRes.data.filter((s: any) => s.status === 'ONLINE');
+        const installing = serversRes.data.filter((s: any) => s.status === 'INSTALLING');
+        setServers(online);
+        setInstallingServers(installing);
+        const dailyTotal = online.reduce((sum: number, s: any) => sum + (s.daily_earnings || 0), 0);
+        setDailyEarnings(dailyTotal);
+      }
+
+      // 3. Referral Stats
+      const refCountRes = await supabase
+        .from('referrals')
+        .select('id, status', { count: 'exact' })
+        .eq('referrer_id', user.id);
+      
+      const refEarningsRes = await supabase
+        .from('referral_earnings')
+        .select('amount')
+        .eq('user_id', user.id);
+
+      if (refCountRes.data) {
+        setReferralStats(prev => ({
+          ...prev,
+          totalReferrals: refCountRes.data?.length || 0,
+          activeReferrals: refCountRes.data?.filter((r: any) => r.status === 'ACTIVE').length || 0
+        }));
+      }
+      if (refEarningsRes.data) {
+        const total = refEarningsRes.data.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
+        setReferralStats(prev => ({ ...prev, totalEarnings: total }));
+      }
+
+      // 4. Providers (from brokers table)
+      const providersRes = await supabase
+        .from('brokers')
+        .select('id, name, status, rating, total_trades, mpesa_number')
+        .in('status', ['ACTIVE', 'BUSY'])
+        .limit(10);
+      
+      if (providersRes.data) {
+        setProviders(providersRes.data);
+      }
+
+      setIsInitialized(true);
+    } catch (err) {
+      console.error('Dashboard fetch error:', err);
+    }
+  }, [user]);
+
+  // Initial fetch
+  useEffect(() => {
+    if (user?.id) {
+      fetchDashboardData();
+    }
+  }, [user, fetchDashboardData]);
+
+  // 🔑 REALTIME BALANCE SYNC
   useEffect(() => {
     if (!user?.id) return;
     const supabase = createClient();
@@ -111,102 +176,6 @@ export default function InvestorDashboardPage() {
   }, [user?.id]);
 
   // ============================================
-  // FETCH DATA FROM SUPABASE (Non-blocking, like WalletPage)
-  // ============================================
-  const fetchDashboardData = useCallback(async () => {
-    if (!user?.id) return;
-    
-    try {
-      const supabase = createClient();
-
-      // 1. Profile & Balance (CRITICAL - fetch first)
-      setLoadingBalance(true);
-      const profileRes = await supabase
-        .from('profiles')
-        .select('wallet_balance, referral_code, is_broker')
-        .eq('id', user.id)
-        .single();
-      
-      if (profileRes.data) {
-        const newBalance = profileRes.data.wallet_balance || 0;
-        setBalance(newBalance);
-        balanceRef.current = newBalance;
-        setReferralCode(profileRes.data.referral_code || `REF-${user.id.substring(0, 6).toUpperCase()}`);
-      }
-      setLoadingBalance(false);
-
-      // 2. Active Servers (fetch async, non-blocking)
-      setLoadingServers(true);
-      const serversRes = await supabase
-        .from('server_instances')
-        .select('*')
-        .eq('user_id', user.id)
-        .in('status', ['ONLINE', 'INSTALLING'])
-        .order('created_at', { ascending: false });
-      
-      if (serversRes.data) {
-        const online = serversRes.data.filter((s: any) => s.status === 'ONLINE');
-        const installing = serversRes.data.filter((s: any) => s.status === 'INSTALLING');
-        setServers(online);
-        serversRef.current = online;
-        setInstallingServers(installing);
-        const dailyTotal = online.reduce((sum: number, s: any) => sum + (s.daily_earnings || 0), 0);
-        setDailyEarnings(dailyTotal);
-      }
-      setLoadingServers(false);
-
-      // 3. Referral Stats (fetch async, non-blocking)
-      setLoadingReferrals(true);
-      const [refCountRes, refEarningsRes] = await Promise.allSettled([
-        supabase.from('referrals').select('id, status', { count: 'exact' }).eq('referrer_id', user.id),
-        supabase.from('referral_earnings').select('amount').eq('user_id', user.id)
-      ]);
-
-      let newReferralStats = { ...referralStatsRef.current };
-      
-      if (refCountRes.status === 'fulfilled' && refCountRes.value.data) {
-        newReferralStats.totalReferrals = refCountRes.value.data?.length || 0;
-        newReferralStats.activeReferrals = refCountRes.value.data?.filter((r: any) => r.status === 'ACTIVE').length || 0;
-      }
-      if (refEarningsRes.status === 'fulfilled' && refEarningsRes.value.data) {
-        const total = refEarningsRes.value.data.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
-        newReferralStats.totalEarnings = total;
-      }
-      setReferralStats(newReferralStats);
-      referralStatsRef.current = newReferralStats;
-      setLoadingReferrals(false);
-
-      // 4. Providers (fetch async, non-blocking)
-      setLoadingProviders(true);
-      const providersRes = await supabase
-        .from('brokers')
-        .select('id, name, status, rating, total_trades, mpesa_number')
-        .in('status', ['ACTIVE', 'BUSY'])
-        .limit(10);
-      
-      if (providersRes.data) {
-        setProviders(providersRes.data);
-      }
-      setLoadingProviders(false);
-
-    } catch (err) {
-      console.error('Dashboard fetch error:', err);
-      // ✅ Allow UI to render even if some fetches fail
-      setLoadingBalance(false);
-      setLoadingServers(false);
-      setLoadingReferrals(false);
-      setLoadingProviders(false);
-    }
-  }, [user]);
-
-  // Initial fetch - runs after auth confirms user
-  useEffect(() => {
-    if (user?.id) {
-      fetchDashboardData();
-    }
-  }, [user, fetchDashboardData]);
-
-  // ============================================
   // ACTIONS (REAL DB WRITES)
   // ============================================
   const showNotification = (msg: string, type: 'success' | 'error' | 'info') => {
@@ -214,7 +183,7 @@ export default function InvestorDashboardPage() {
     setTimeout(() => setNotification(null), 4000);
   };
 
-  // 🔑 RENT SERVER - SAVES TO DATABASE
+  // 🔑 RENT SERVER - SAVES TO DATABASE ✅ FIXED DESTRUCTURING
   const handleRentServer = async (investment: number) => {
     if (!user?.id) {
       showNotification('Please log in to rent a server', 'error');
@@ -222,9 +191,9 @@ export default function InvestorDashboardPage() {
       return;
     }
     
-    // Balance Check (use ref for latest value)
-    if (investment > balanceRef.current) {
-      showNotification(`Insufficient TLC. You have ${balanceRef.current} TLC, need ${investment} TLC.`, 'error');
+    // Balance Check
+    if (investment > balance) {
+      showNotification(`Insufficient TLC. You have ${balance} TLC, need ${investment} TLC.`, 'error');
       setTimeout(() => router.push('/wallet'), 1500);
       return;
     }
@@ -234,6 +203,7 @@ export default function InvestorDashboardPage() {
       const supabase = createClient();
       const dailyEarnings = Math.floor(investment * 0.05 * 10) / 10; // 5% daily
       
+      // ✅ FIX: Destructure as { data, error } NOT {  serverData, error }
       const { data: serverData, error: insertError } = await supabase
         .from('server_instances')
         .insert({
@@ -252,11 +222,11 @@ export default function InvestorDashboardPage() {
       if (insertError) throw insertError;
       if (!serverData) throw new Error('No server data returned');
 
-      // Deduct balance in database
-      const newBalance = balanceRef.current - investment;
+      // 2. ✅ DEDUCT BALANCE IN DATABASE
+      const newBalance = balance - investment;
       await supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', user.id);
 
-      // Log transaction
+      // 3. ✅ LOG TRANSACTION
       await supabase.from('wallet_transactions').insert({
         user_id: user.id,
         type: 'STAKE',
@@ -265,9 +235,8 @@ export default function InvestorDashboardPage() {
         description: `Server Rental Investment (${investment} TLC)`
       });
 
-      // Update local state for UI
+      // 4. Update Local State for UI (show installation animation)
       setBalance(newBalance);
-      balanceRef.current = newBalance;
       setInstallingServers(prev => [...prev, { 
         ...serverData, 
         specs: { 
@@ -278,22 +247,27 @@ export default function InvestorDashboardPage() {
       }]);
       showNotification('Server provisioning started...', 'info');
 
-      // Simulate installation (15 seconds) then update database to 'ONLINE'
+      // 5. ⚠️ SIMULATE INSTALLATION (15 seconds) THEN UPDATE DATABASE TO 'ONLINE'
       setTimeout(async () => {
         try {
+          // ✅ CRITICAL FIX: Update database status from INSTALLING to ONLINE
           await supabase
             .from('server_instances')
             .update({ status: 'ONLINE' })
             .eq('id', serverData.id);
           
+          // Remove from installing list
           setInstallingServers(prev => prev.filter(s => s.id !== serverData.id));
-          await fetchDashboardData(); // Refresh from DB
+          
+          // Refresh from DB to ensure it appears in "My Servers" as ONLINE
+          await fetchDashboardData();
+          
           showNotification('Server Online! Earnings started.', 'success');
         } catch (updateErr) {
           console.error('Failed to update server status:', updateErr);
           showNotification('Server rented but status update failed', 'error');
         }
-      }, 15000);
+      }, 15000); // 15 second installation simulation
 
     } catch (err: any) {
       console.error('Rent server error:', err);
@@ -303,26 +277,22 @@ export default function InvestorDashboardPage() {
     }
   };
 
-  // 🔑 WITHDRAW EARNINGS
+  // 🔑 WITHDRAW EARNINGS - SAVES TO DATABASE
   const handleWithdraw = async (serverId: string) => {
     if (!user?.id) {
       showNotification('Please log in', 'error');
       return;
     }
 
-    const server = serversRef.current.find(s => s.id === serverId);
+    const server = servers.find(s => s.id === serverId);
     if (!server || server.total_earned <= 0) return;
-    
     try {
       const supabase = createClient();
-      
       // Reset server earnings
       await supabase.from('server_instances').update({ total_earned: 0 }).eq('id', serverId);
-      
       // Add to wallet
-      const newBalance = balanceRef.current + server.total_earned;
+      const newBalance = balance + server.total_earned;
       await supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', user.id);
-      
       // Log transaction
       await supabase.from('wallet_transactions').insert({
         user_id: user.id,
@@ -331,12 +301,8 @@ export default function InvestorDashboardPage() {
         balance_after: newBalance,
         description: `Server Earnings Withdrawal (${server.investment} TLC node)`
       });
-
       setBalance(newBalance);
-      balanceRef.current = newBalance;
       setServers(prev => prev.map(s => s.id === serverId ? { ...s, total_earned: 0 } : s));
-      serversRef.current = serversRef.current.map(s => s.id === serverId ? { ...s, total_earned: 0 } : s);
-      
       showNotification(`Withdrew ${server.total_earned} TLC`, 'success');
       fetchDashboardData();
     } catch (err) {
@@ -351,13 +317,13 @@ export default function InvestorDashboardPage() {
 
   const handleRefresh = () => {
     fetchDashboardData();
-    showNotification('Refreshing dashboard...', 'info');
+    showNotification('Refreshing...', 'info');
   };
 
   // ============================================
-  // AUTH LOADING ONLY (No isInitialized gate)
+  // LOADING STATE
   // ============================================
-  if (authLoading || !user) {
+  if (authLoading || !isInitialized) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
@@ -369,7 +335,7 @@ export default function InvestorDashboardPage() {
   }
 
   // ============================================
-  // RENDER (Always renders after auth, with available data)
+  // RENDER
   // ============================================
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
@@ -403,7 +369,7 @@ export default function InvestorDashboardPage() {
       />
 
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 py-6 w-full">
-        {/* Global Stats Header - Shows balance immediately */}
+        {/* Global Stats Header */}
         <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-6 text-white mb-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -413,11 +379,7 @@ export default function InvestorDashboardPage() {
             <div className="flex items-center gap-4">
               <div className="text-right">
                 <p className="text-slate-400 text-xs">Balance</p>
-                {loadingBalance ? (
-                  <div className="h-8 w-24 bg-white/20 rounded animate-pulse" />
-                ) : (
-                  <p className="text-2xl font-bold text-green-400">{balance.toLocaleString()} TLC</p>
-                )}
+                <p className="text-2xl font-bold text-green-400">{balance.toLocaleString()} TLC</p>
               </div>
               <button onClick={handleRefresh} className="p-2 hover:bg-white/10 rounded-lg transition-colors">
                 <RefreshCw className="w-5 h-5" />
@@ -427,27 +389,15 @@ export default function InvestorDashboardPage() {
           <div className="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-white/10">
             <div className="text-center">
               <p className="text-xs text-slate-400">Daily Income</p>
-              {loadingServers ? (
-                <div className="h-6 w-16 bg-white/20 rounded animate-pulse mx-auto mt-1" />
-              ) : (
-                <p className="text-lg font-bold text-green-400">+{dailyEarnings.toFixed(1)} TLC</p>
-              )}
+              <p className="text-lg font-bold text-green-400">+{dailyEarnings.toFixed(1)} TLC</p>
             </div>
             <div className="text-center">
               <p className="text-xs text-slate-400">Active Servers</p>
-              {loadingServers ? (
-                <div className="h-6 w-8 bg-white/20 rounded animate-pulse mx-auto mt-1" />
-              ) : (
-                <p className="text-lg font-bold">{servers.length}</p>
-              )}
+              <p className="text-lg font-bold">{servers.length}</p>
             </div>
             <div className="text-center">
               <p className="text-xs text-slate-400">Referral Earnings</p>
-              {loadingReferrals ? (
-                <div className="h-6 w-20 bg-white/20 rounded animate-pulse mx-auto mt-1" />
-              ) : (
-                <p className="text-lg font-bold text-purple-400">{referralStats.totalEarnings.toFixed(1)} TLC</p>
-              )}
+              <p className="text-lg font-bold text-purple-400">{referralStats.totalEarnings.toFixed(1)} TLC</p>
             </div>
           </div>
         </div>
@@ -524,7 +474,6 @@ export default function InvestorDashboardPage() {
                 installingServers={installingServers}
                 onWithdraw={handleWithdraw}
                 isRenting={isRenting}
-                isLoading={loadingServers}
               />
             )}
 
@@ -534,19 +483,10 @@ export default function InvestorDashboardPage() {
                 referralStats={referralStats}
                 providers={providers}
                 onCopyCode={copyReferralCode}
-                isLoading={loadingReferrals || loadingProviders}
               />
             )}
           </motion.div>
         </AnimatePresence>
-
-        {/* Loading indicator for background fetches */}
-        {(loadingServers || loadingReferrals || loadingProviders) && (
-          <div className="fixed bottom-4 right-4 bg-slate-800 text-white px-4 py-2 rounded-lg shadow-lg text-sm flex items-center gap-2 z-40">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>Updating data...</span>
-          </div>
-        )}
       </main>
 
       <Footer />
