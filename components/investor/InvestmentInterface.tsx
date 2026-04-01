@@ -18,6 +18,7 @@ export interface ServerInstance {
   daily_earnings: number;
   status: 'INSTALLING' | 'ONLINE' | 'OFFLINE';
   total_earned: number;
+  last_earned_at?: string; 
   created_at: string;
   specs?: { cpu: number; ram: number; storage: number };
   installProgress?: number;

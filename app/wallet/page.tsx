@@ -17,7 +17,9 @@ import {
   RefreshCw,
   Coins,
   Lock,
-  Crown
+  Crown,
+  Server,
+  PiggyBank
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
@@ -25,7 +27,7 @@ import Header from '@/components/dashboard/Header';
 import Footer from '@/components/dashboard/Footer';
 import { createClient } from '@/lib/supabase';
 
-type TransactionType = 'EARN' | 'STAKE' | 'GIFT_SENT' | 'GIFT_RECEIVED' | 'BONUS';
+type TransactionType = 'EARN' | 'STAKE' | 'GIFT_SENT' | 'GIFT_RECEIVED' | 'BONUS' | 'WITHDRAWAL';
 
 interface Transaction {
   id: string;
@@ -49,8 +51,8 @@ export default function WalletPage() {
   const router = useRouter();
   
   const [balance, setBalance] = useState(0);
-  const [baseBalance, setBaseBalance] = useState(0);
-  const [isBroker, setIsBroker] = useState(false); // 🔑 New broker flag
+  const [baseBalance, setBaseBalance] = useState(0); // The amount locked from initial redeem/deposit
+  const [isBroker, setIsBroker] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [transferCodes, setTransferCodes] = useState<TransferCode[]>([]);
   const [transferAmount, setTransferAmount] = useState('');
@@ -70,10 +72,12 @@ export default function WalletPage() {
     isBrokerRef.current = isBroker;
   }, [balance, baseBalance, isBroker]);
 
-  // 🔑 Brokers can transfer ANY amount (no restrictions)
+  // 🔑 LOGIC UPDATE: 
+  // Regular users can ONLY transfer what they have EARNED (Total - Base).
+  // Brokers can transfer everything.
   const getTransferableBalance = useCallback(() => {
-    if (isBrokerRef.current) return balanceRef.current; // Brokers: full balance
-    return Math.max(0, balanceRef.current - baseBalanceRef.current); // Regular: earned only
+    if (isBrokerRef.current) return balanceRef.current; 
+    return Math.max(0, balanceRef.current - baseBalanceRef.current); 
   }, []);
 
   const fetchWalletData = useCallback(async () => {
@@ -83,7 +87,6 @@ export default function WalletPage() {
       setRefreshing(true);
       const supabase = createClient();
       
-      // 🔑 Fetch is_broker flag along with balances
       const response = await supabase
         .from('profiles')
         .select('wallet_balance, base_balance, is_broker')
@@ -182,7 +185,7 @@ export default function WalletPage() {
     
     // 🔑 Brokers bypass transferable balance check
     if (!isBrokerRef.current && amount > transferable) {
-      showNotification(`You can only transfer earned coins. Available: ${transferable} TLC`, "error");
+      showNotification(`You can only transfer profits earned from servers. Available: ${transferable} TLC`, "error");
       return;
     }
     
@@ -220,7 +223,7 @@ export default function WalletPage() {
           balance_after: newBalance,
           description: isBrokerRef.current 
             ? `Gift code ${code} (Broker distribution)` 
-            : `Gift code ${code} (earned coins)`
+            : `Gift code ${code} (Server profits)`
         });
       
       if (txnError) throw txnError;
@@ -333,7 +336,7 @@ export default function WalletPage() {
           type: 'GIFT_RECEIVED',
           amount: codeData.amount,
           balance_after: newBalance,
-          description: `Redeemed code ${cleanCode} (base balance locked)`
+          description: `Redeemed code ${cleanCode} (Capital locked)`
         });
       
       if (txnError) throw txnError;
@@ -395,7 +398,9 @@ export default function WalletPage() {
   }
 
   const transferableBalance = getTransferableBalance();
-  const dailyRate = Math.floor(baseBalance / 20);
+  // Calculate invested capital (Total - Earned Profits). 
+  // Since Base Balance is the "locked" capital, we display that as the investment anchor.
+  const investedCapital = baseBalance; 
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
@@ -463,26 +468,35 @@ export default function WalletPage() {
             </div>
           )}
           
-          {/* Transferable Balance Summary */}
+          {/* Investment Breakdown Summary */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 pt-4 border-t border-white/10">
             <div className="bg-white/10 rounded-lg p-3 text-center">
-              <p className="text-xs text-slate-300">Locked (Base)</p>
+              <div className="flex items-center justify-center gap-1 mb-1">
+                <PiggyBank className="w-3 h-3 text-slate-400" />
+                <p className="text-xs text-slate-300">Locked Capital</p>
+              </div>
               <p className="text-lg font-bold text-slate-200">{baseBalance.toLocaleString()} TLC</p>
             </div>
             <div className={cn("rounded-lg p-3 text-center border", isBroker ? "bg-yellow-500/20 border-yellow-500/30" : "bg-green-500/20 border-green-500/30")}>
-              <p className="text-xs text-slate-300">{isBroker ? 'Available (Broker)' : 'Transferable (Earned)'}</p>
+              <div className="flex items-center justify-center gap-1 mb-1">
+                <Server className="w-3 h-3 text-slate-400" />
+                <p className="text-xs text-slate-300">{isBroker ? 'Available (Broker)' : 'Earned Profits'}</p>
+              </div>
               <p className="text-lg font-bold text-yellow-400">{transferableBalance.toLocaleString()} TLC</p>
             </div>
             <div className="bg-white/10 rounded-lg p-3 text-center">
-              <p className="text-xs text-slate-300">Daily Rate</p>
-              <p className="text-lg font-bold text-blue-400">{dailyRate.toLocaleString()} TLC/day</p>
+              <div className="flex items-center justify-center gap-1 mb-1">
+                <TrendingUp className="w-3 h-3 text-slate-400" />
+                <p className="text-xs text-slate-300">Total Value</p>
+              </div>
+              <p className="text-lg font-bold text-blue-400">{balance.toLocaleString()} TLC</p>
             </div>
           </div>
           
           <p className="text-xs text-slate-400 mt-3 text-center sm:text-left">
             {isBroker 
               ? '💼 As broker, you can distribute any amount from your balance.'
-              : '💡 You can only transfer coins you have earned. Your initial redemption is locked.'}
+              : '💡 You can only transfer profits earned from server investments. Your initial capital is locked to keep servers running.'}
           </p>
           
           <div className="flex gap-3 sm:gap-4 mt-6">
@@ -490,8 +504,8 @@ export default function WalletPage() {
               onClick={() => router.push('/')}
               className="flex-1 py-3 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold transition-colors flex items-center justify-center gap-2 text-sm sm:text-base"
             >
-              <TrendingUp className="w-5 h-5" />
-              Earn More
+              <Server className="w-5 h-5" />
+              Invest in Servers
             </button>
             <button className="flex-1 py-3 bg-white/10 hover:bg-white/20 rounded-xl font-bold transition-colors flex items-center justify-center gap-2 text-sm sm:text-base">
               <Download className="w-5 h-5" />
@@ -509,23 +523,23 @@ export default function WalletPage() {
                 <ArrowRightLeft className="w-5 h-5 text-blue-600" />
               </div>
               <h2 className="text-lg font-bold text-slate-800">
-                {isBroker ? 'Distribute Coins' : 'Send Gift'}
+                {isBroker ? 'Distribute Coins' : 'Send Profits'}
               </h2>
             </div>
             <p className="text-sm text-slate-500 mb-4">
               {isBroker 
                 ? 'Create a code to distribute TLC to users. No restrictions.'
-                : 'Create a code to gift earned TLC to another user.'}
+                : 'Create a code to gift your server earnings to another user.'}
             </p>
             
             <div className="mb-4 p-3 bg-blue-50 rounded-lg border border-blue-200">
               <p className="text-sm text-blue-700">
-                Available: <span className="font-bold">{transferableBalance.toLocaleString()} TLC</span>
+                Available to Send: <span className="font-bold">{transferableBalance.toLocaleString()} TLC</span>
               </p>
               {!isBroker && transferableBalance <= 0 && (
-                <p className="text-xs text-blue-600 mt-1">
-                  <Lock className="w-3 h-3 inline mr-1" />
-                  Redeem coins or complete tasks to earn transferable TLC.
+                <p className="text-xs text-blue-600 mt-1 flex items-start gap-1">
+                  <Lock className="w-3 h-3 inline mt-0.5 flex-shrink-0" />
+                  <span>You have no earned profits yet. Invest in servers on the dashboard to start earning transferable TLC.</span>
                 </p>
               )}
             </div>
@@ -549,7 +563,7 @@ export default function WalletPage() {
                 </div>
                 {transferAmount && parseInt(transferAmount) > transferableBalance && (
                   <p className="text-xs text-red-600 mt-1">
-                    Cannot exceed {transferableBalance.toLocaleString()} TLC
+                    Cannot exceed {transferableBalance.toLocaleString()} TLC (Earned Profits Only)
                   </p>
                 )}
               </div>
@@ -594,7 +608,7 @@ export default function WalletPage() {
               <h2 className="text-lg font-bold text-slate-800">Redeem Gift</h2>
             </div>
             <p className="text-sm text-slate-500 mb-4">
-              Enter a code to claim TLC. Redeemed coins are locked until you earn more.
+              Enter a code to claim TLC. Redeemed coins are added to your locked capital base.
             </p>
             
             <form onSubmit={redeemTransferCode} className="space-y-4">

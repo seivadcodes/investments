@@ -6,15 +6,15 @@ import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase';
 
-// Helper to ensure profile exists and has basic fields
-async function ensureProfileExists(user: User) {
+// Helper to ensure profile exists and has basic fields + referral tracking
+async function ensureProfileExists(user: User, referralCode?: string | null) {
   if (!user?.id) return;
 
   const supabase = createClient();
 
   const { data: existingProfile, error: fetchError } = await supabase
     .from('profiles')
-    .select('id')
+    .select('id, referral_code')
     .eq('id', user.id)
     .single();
 
@@ -27,9 +27,10 @@ async function ensureProfileExists(user: User) {
     'User';
 
   const country = typeof metadata?.country === 'string' ? metadata.country : null;
+  const storedReferral = typeof metadata?.referral_code === 'string' ? metadata.referral_code : referralCode;
 
   if (fetchError?.code === 'PGRST116') {
-    // Profile doesn't exist → create it
+    // Profile doesn't exist → create it with referral code if provided
     const { error: insertError } = await supabase
       .from('profiles')
       .insert({
@@ -37,6 +38,7 @@ async function ensureProfileExists(user: User) {
         email: user.email,
         full_name: fullName,
         country,
+        referral_code: storedReferral, // Store the referral code they signed up with
         last_seen: now,
         created_at: now,
         onboarding_completed: false,
@@ -47,16 +49,77 @@ async function ensureProfileExists(user: User) {
     if (insertError && insertError.code !== '23505') {
       console.error('Failed to create profile:', insertError);
     }
+
+    // If they used a referral code, create a referral record linking them to the referrer
+    if (storedReferral) {
+      await createReferralRecord(supabase, user.id, storedReferral);
+    }
   } else if (existingProfile) {
-    // Profile exists → only update last_seen
+    // Profile exists → update last_seen and ensure referral_code is set if not already
+    const updateData: Record<string, any> = { last_seen: now };
+    
+    // Only update referral_code if it wasn't already set and we have a new one
+    if (!existingProfile.referral_code && storedReferral) {
+      updateData.referral_code = storedReferral;
+      // Also create referral record if we're adding it now
+      await createReferralRecord(supabase, user.id, storedReferral);
+    }
+    
     const { error: updateError } = await supabase
       .from('profiles')
-      .update({ last_seen: now })
+      .update(updateData)
       .eq('id', user.id);
 
     if (updateError) {
-      console.warn('Failed to update last_seen:', updateError);
+      console.warn('Failed to update profile:', updateError);
     }
+  }
+}
+
+// Helper: Create referral record linking new user to referrer
+async function createReferralRecord(supabase: ReturnType<typeof createClient>, newUserId: string, referralCode: string) {
+  try {
+    // Find the referrer by their referral_code
+    const { data: referrer, error: referrerError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('referral_code', referralCode.toUpperCase())
+      .single();
+
+    if (referrerError || !referrer) {
+      console.warn('Referral code not found:', referralCode);
+      return;
+    }
+
+    // Don't allow self-referral
+    if (referrer.id === newUserId) return;
+
+    // Check if referral already exists to avoid duplicates
+    const { data: existingReferral } = await supabase
+      .from('referrals')
+      .select('id')
+      .eq('referrer_id', referrer.id)
+      .eq('referred_id', newUserId)
+      .maybeSingle();
+
+    if (existingReferral) return; // Already tracked
+
+    // Create the referral record
+    const { error: insertError } = await supabase
+      .from('referrals')
+      .insert({
+        referrer_id: referrer.id,
+        referred_id: newUserId,
+        referral_code: referralCode.toUpperCase(),
+        status: 'PENDING', // Will become ACTIVE after email verification or first action
+        created_at: new Date().toISOString(),
+      });
+
+    if (insertError) {
+      console.error('Failed to create referral record:', insertError);
+    }
+  } catch (err) {
+    console.error('Referral tracking error:', err);
   }
 }
 
@@ -81,7 +144,8 @@ export function useAuth() {
       email: string,
       password: string,
       fullName?: string,
-      country?: string | null
+      country?: string | null,
+      referralCode?: string | null
     ) => {
       const supabase = createClient();
       const { data, error } = await supabase.auth.signUp({
@@ -91,6 +155,7 @@ export function useAuth() {
           data: {
             full_name: fullName,
             country: country || null,
+            referral_code: referralCode?.toUpperCase() || null, // Store in user_metadata too
           },
           emailRedirectTo: typeof window !== 'undefined'
             ? `${window.location.origin}/auth/callback`
@@ -98,6 +163,12 @@ export function useAuth() {
         },
       });
       if (error) throw error;
+      
+      // Ensure profile is created with referral code
+      if (data.user) {
+        await ensureProfileExists(data.user, referralCode);
+      }
+      
       return data;
     },
     []

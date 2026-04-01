@@ -84,6 +84,50 @@ export default function InvestorDashboardPage() {
   }, [user, authLoading, router]);
 
   // ============================================
+  // HELPER: Calculate and Update Server Earnings
+  // ============================================
+  const updateServerEarnings = async (supabase: any, server: any) => {
+    if (server.status !== 'ONLINE' || !server.daily_earnings || server.daily_earnings <= 0) {
+      return server;
+    }
+
+    const now = new Date();
+    const lastUpdate = new Date(server.last_earned_at || server.created_at);
+    const minutesOnline = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
+    
+    // Only update if at least 1 minute has passed
+    if (minutesOnline < 1) {
+      return server;
+    }
+
+    // Calculate earnings: daily_earnings * (minutes / 1440)
+    // 1440 = minutes in a day
+    const newEarnings = server.daily_earnings * (minutesOnline / 1440);
+    
+    if (newEarnings < 0.001) {
+      return server; // Too small to matter
+    }
+
+    // Update in database
+    const { data: updated, error } = await supabase
+      .from('server_instances')
+      .update({
+        total_earned: (server.total_earned || 0) + newEarnings,
+        last_earned_at: now.toISOString()
+      })
+      .eq('id', server.id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('Failed to update server earnings:', error);
+      return server;
+    }
+
+    return updated;
+  };
+
+  // ============================================
   // FETCH DATA FROM SUPABASE (REAL DB)
   // ============================================
   const fetchDashboardData = useCallback(async () => {
@@ -119,7 +163,7 @@ export default function InvestorDashboardPage() {
         setReferralCode(profileRes.data.referral_code || `REF-${currentUser.id.substring(0, 6).toUpperCase()}`);
       }
 
-      // 2. Active Servers
+      // 2. Active Servers WITH EARNINGS CALCULATION
       console.log('[Dashboard] Fetching servers...');
       const serversRes = await supabase
         .from('server_instances')
@@ -131,11 +175,20 @@ export default function InvestorDashboardPage() {
       if (serversRes.error) {
         console.error('[Dashboard] Servers fetch error:', serversRes.error);
       } else if (serversRes.data) {
-        const online = serversRes.data.filter((s: any) => s.status === 'ONLINE');
-        const installing = serversRes.data.filter((s: any) => s.status === 'INSTALLING');
+        // Update earnings for each online server
+        const updatedServers = [];
+        for (const server of serversRes.data) {
+          const updated = await updateServerEarnings(supabase, server);
+          updatedServers.push(updated);
+        }
+
+        const online = updatedServers.filter((s: any) => s.status === 'ONLINE');
+        const installing = updatedServers.filter((s: any) => s.status === 'INSTALLING');
+        
         console.log('[Dashboard] Servers loaded:', { online: online.length, installing: installing.length });
         setServers(online);
         setInstallingServers(installing);
+        
         const dailyTotal = online.reduce((sum: number, s: any) => sum + (s.daily_earnings || 0), 0);
         setDailyEarnings(dailyTotal);
       }
@@ -191,6 +244,22 @@ export default function InvestorDashboardPage() {
       fetchDashboardData();
     }
   }, [authLoading, user?.id, fetchDashboardData]);
+
+  // Auto-refresh earnings every 30 seconds while dashboard is open
+  useEffect(() => {
+    if (!user?.id) return;
+    
+    console.log('[Dashboard] Setting up auto-refresh interval');
+    const interval = setInterval(() => {
+      console.log('[Dashboard] Auto-refreshing server earnings...');
+      fetchDashboardData();
+    }, 30000); // Every 30 seconds
+    
+    return () => {
+      console.log('[Dashboard] Cleaning up auto-refresh interval');
+      clearInterval(interval);
+    };
+  }, [user?.id, fetchDashboardData]);
 
   // 🔑 REALTIME BALANCE SYNC
   useEffect(() => {
@@ -339,25 +408,35 @@ export default function InvestorDashboardPage() {
     try {
       const supabase = createClient();
       
+      // Recalculate earnings one final time before withdrawal
+      const now = new Date();
+      const lastUpdate = new Date(server.last_earned_at || server.created_at);
+      const minutesOnline = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
+      const pendingEarnings = server.daily_earnings * (minutesOnline / 1440);
+      const finalTotal = (server.total_earned || 0) + pendingEarnings;
+      
       // Reset server earnings
-      await supabase.from('server_instances').update({ total_earned: 0 }).eq('id', serverId);
+      await supabase.from('server_instances').update({ 
+        total_earned: 0,
+        last_earned_at: now.toISOString()
+      }).eq('id', serverId);
       
       // Add to wallet
-      const newBalance = balanceRef.current + server.total_earned;
+      const newBalance = balanceRef.current + finalTotal;
       await supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', currentUser.id);
       
       // Log transaction
       await supabase.from('wallet_transactions').insert({
         user_id: currentUser.id,
         type: 'EARN',
-        amount: server.total_earned,
+        amount: finalTotal,
         balance_after: newBalance,
         description: `Server Earnings Withdrawal (${server.investment} TLC node)`
       });
       
       setBalance(newBalance);
       setServers(prev => prev.map(s => s.id === serverId ? { ...s, total_earned: 0 } : s));
-      showNotification(`Withdrew ${server.total_earned} TLC`, 'success');
+      showNotification(`Withdrew ${finalTotal.toFixed(1)} TLC`, 'success');
       fetchDashboardData();
     } catch (err) {
       console.error('Withdraw error:', err);

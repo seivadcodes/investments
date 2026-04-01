@@ -1,9 +1,10 @@
+// /app/auth/page.tsx (AuthPage)
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';
-import { ShieldCheck, Mail, Lock, User, AlertCircle, CheckCircle } from 'lucide-react';
+import { ShieldCheck, Mail, Lock, User, AlertCircle, CheckCircle, Gift, Copy } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const EMAIL_STORAGE_KEY = 'truelabel.auth.email';
@@ -15,11 +16,14 @@ type CountryInfo = {
 export default function AuthPage() {
   const { user, loading, signIn, signUp } = useAuth();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [authMode, setAuthMode] = useState<'sign-in' | 'sign-up'>('sign-up');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [referralCode, setReferralCode] = useState('');
+  const [detectedReferral, setDetectedReferral] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -28,9 +32,25 @@ export default function AuthPage() {
   // Redirect to dashboard after auth
   useEffect(() => {
     if (!loading && user) {
-      router.replace('/');
+      // Preserve referral code in URL if present (for tracking)
+      const refParam = searchParams?.get('ref');
+      const redirectPath = refParam ? `/?ref=${refParam}` : '/';
+      router.replace(redirectPath);
     }
-  }, [user, loading, router]);
+  }, [user, loading, router, searchParams]);
+
+  // Capture referral code from URL query param
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlRef = searchParams?.get('ref') || '';
+      if (urlRef.trim()) {
+        setDetectedReferral(urlRef.trim().toUpperCase());
+        setReferralCode(urlRef.trim().toUpperCase());
+        // Auto-switch to sign-up mode if referral detected
+        setAuthMode('sign-up');
+      }
+    }
+  }, [searchParams]);
 
   // Detect returning user via saved email
   useEffect(() => {
@@ -81,10 +101,15 @@ export default function AuthPage() {
         if (!fullName.trim()) {
           throw new Error('Please enter your full name.');
         }
-        await signUp(email, password, fullName.trim(), userCountry);
-        setSuccess('Account created! Please check your email to verify.');
-        // Optional: auto sign in after sign up if your Supabase config allows
-        // await signIn(email, password);
+        // Pass referral code (from input or URL) to signUp
+        const refCode = referralCode.trim().toUpperCase() || detectedReferral || null;
+        await signUp(email, password, fullName.trim(), userCountry, refCode);
+        
+        if (refCode) {
+          setSuccess(`Account created with referral ${refCode}! Check your email to verify.`);
+        } else {
+          setSuccess('Account created! Please check your email to verify.');
+        }
       }
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -94,6 +119,14 @@ export default function AuthPage() {
       }
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const copyDetectedReferral = () => {
+    if (detectedReferral) {
+      navigator.clipboard.writeText(detectedReferral);
+      setSuccess('Referral code copied!');
+      setTimeout(() => setSuccess(''), 2000);
     }
   };
 
@@ -180,22 +213,61 @@ export default function AuthPage() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {authMode === 'sign-up' && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  Full Name
-                </label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    placeholder="John Doe"
-                    required
-                    className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-slate-900 placeholder:text-slate-400 bg-white"
-                  />
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Full Name
+                  </label>
+                  <div className="relative">
+                    <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                    <input
+                      type="text"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      placeholder="John Doe"
+                      required
+                      className="w-full pl-10 pr-4 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all text-slate-900 placeholder:text-slate-400 bg-white"
+                    />
+                  </div>
                 </div>
-              </div>
+
+                {/* Referral Code Input - Optional */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    Referral Code <span className="text-slate-400 font-normal">(Optional)</span>
+                  </label>
+                  <div className="relative">
+                    <Gift className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400" />
+                    <input
+                      type="text"
+                      value={referralCode}
+                      onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+                      placeholder="REF-XXXXXX"
+                      className="w-full pl-10 pr-10 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all text-slate-900 placeholder:text-slate-400 bg-white uppercase"
+                    />
+                    {/* Show detected referral from URL with copy button */}
+                    {detectedReferral && !referralCode && (
+                      <button
+                        type="button"
+                        onClick={copyDetectedReferral}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-green-600 hover:bg-green-50 rounded-lg transition-colors"
+                        title="Use this referral code"
+                      >
+                        <Copy className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                  {detectedReferral && !referralCode && (
+                    <p className="text-xs text-green-600 mt-1 flex items-center gap-1">
+                      <Gift className="w-3 h-3" />
+                      Detected from link: <strong className="ml-1">{detectedReferral}</strong>
+                    </p>
+                  )}
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Earn bonus rewards when you sign up with a referral code
+                  </p>
+                </div>
+              </>
             )}
 
             <div>
