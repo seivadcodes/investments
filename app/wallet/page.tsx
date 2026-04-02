@@ -336,7 +336,7 @@ export default function WalletPage() {
           type: 'GIFT_RECEIVED',
           amount: codeData.amount,
           balance_after: newBalance,
-          description: `Redeemed code ${cleanCode} (base balance locked)`
+          description: `Redeemed code ${cleanCode} (Capital locked)`
         });
       
       if (txnError) throw txnError;
