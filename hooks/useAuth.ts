@@ -1,4 +1,3 @@
-// /hooks/useAuth.ts
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -6,17 +5,33 @@ import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase';
 
-// Helper to ensure profile exists and has basic fields + referral tracking
-async function ensureProfileExists(user: User, referralCode?: string | null) {
+// Helper: Ensure profile exists and set referrer_id if provided
+async function ensureProfileExists(
+  supabase: ReturnType<typeof createClient>,
+  user: User, 
+  referrerCode?: string | null
+) {
   if (!user?.id) return;
 
-  const supabase = createClient();
+  // First, resolve referrerCode to referrerId if provided
+  let referrerId: string | null = null;
+  if (referrerCode) {
+    const { data: referrer } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('referral_code', referrerCode.toUpperCase())
+      .maybeSingle();
+    
+    if (referrer?.id && referrer.id !== user.id) {
+      referrerId = referrer.id;
+    }
+  }
 
   const { data: existingProfile, error: fetchError } = await supabase
     .from('profiles')
-    .select('id, referral_code')
+    .select('id, referral_code, referrer_id')
     .eq('id', user.id)
-    .single();
+    .maybeSingle();
 
   const now = new Date().toISOString();
   const metadata = user.user_metadata;
@@ -27,10 +42,9 @@ async function ensureProfileExists(user: User, referralCode?: string | null) {
     'User';
 
   const country = typeof metadata?.country === 'string' ? metadata.country : null;
-  const storedReferral = typeof metadata?.referral_code === 'string' ? metadata.referral_code : referralCode;
 
-  if (fetchError?.code === 'PGRST116') {
-    // Profile doesn't exist → create it with referral code if provided
+  if (fetchError?.code === 'PGRST116' || !existingProfile) {
+    // Profile doesn't exist → create it
     const { error: insertError } = await supabase
       .from('profiles')
       .insert({
@@ -38,7 +52,8 @@ async function ensureProfileExists(user: User, referralCode?: string | null) {
         email: user.email,
         full_name: fullName,
         country,
-        referral_code: storedReferral, // Store the referral code they signed up with
+        referral_code: user.id.substring(0, 6).toUpperCase(), // Auto-generate if not set
+        referrer_id: referrerId, // ✅ Set referrer here
         last_seen: now,
         created_at: now,
         onboarding_completed: false,
@@ -49,20 +64,16 @@ async function ensureProfileExists(user: User, referralCode?: string | null) {
     if (insertError && insertError.code !== '23505') {
       console.error('Failed to create profile:', insertError);
     }
-
-    // If they used a referral code, create a referral record linking them to the referrer
-    if (storedReferral) {
-      await createReferralRecord(supabase, user.id, storedReferral);
-    }
   } else if (existingProfile) {
-    // Profile exists → update last_seen and ensure referral_code is set if not already
+    // Profile exists → update last_seen and referrer_id if not set
     const updateData: Record<string, any> = { last_seen: now };
     
-    // Only update referral_code if it wasn't already set and we have a new one
-    if (!existingProfile.referral_code && storedReferral) {
-      updateData.referral_code = storedReferral;
-      // Also create referral record if we're adding it now
-      await createReferralRecord(supabase, user.id, storedReferral);
+    if (!existingProfile.referrer_id && referrerId) {
+      updateData.referrer_id = referrerId;
+    }
+    
+    if (!existingProfile.referral_code) {
+      updateData.referral_code = user.id.substring(0, 6).toUpperCase();
     }
     
     const { error: updateError } = await supabase
@@ -76,92 +87,6 @@ async function ensureProfileExists(user: User, referralCode?: string | null) {
   }
 }
 
-// Helper: Create referral record linking new user to referrer
-async function createReferralRecord(supabase: ReturnType<typeof createClient>, newUserId: string, referralCode: string) {
-  console.log('🔗 [REFERRAL] Starting createReferralRecord', { newUserId, referralCode });
-  
-  try {
-    // 1. Find the referrer
-    console.log('🔍 [REFERRAL] Looking up referrer with code:', referralCode.toUpperCase());
-    const { data: referrer, error: referrerError } = await supabase
-      .from('profiles')
-      .select('id, referral_code, email')
-      .eq('referral_code', referralCode.toUpperCase())
-      .maybeSingle(); // Use maybeSingle to avoid PGRST116 error
-    
-    console.log('📦 [REFERRAL] Referrer lookup result:', { referrer, referrerError });
-    
-    if (referrerError) {
-      console.error('❌ [REFERRAL] Database error:', referrerError);
-      return;
-    }
-    
-    if (!referrer) {
-      console.warn('⚠️ [REFERRAL] No referrer found for code:', referralCode);
-      // Let's also check if ANY profiles have referral_code set
-      const { data: allProfiles } = await supabase
-        .from('profiles')
-        .select('id, referral_code, email')
-        .limit(5);
-      console.log('📋 [REFERRAL] Sample profiles:', allProfiles);
-      return;
-    }
-    
-    // 2. Self-referral check
-    if (referrer.id === newUserId) {
-      console.log('🚫 [REFERRAL] Self-referral blocked');
-      return;
-    }
-    
-    // 3. Check for existing referral
-    console.log('🔎 [REFERRAL] Checking for existing referral record...');
-    const { data: existingReferral, error: existingError } = await supabase
-      .from('referrals')
-      .select('id, status')
-      .eq('referrer_id', referrer.id)
-      .eq('referred_id', newUserId)
-      .maybeSingle();
-    
-    console.log('📦 [REFERRAL] Existing referral check:', { existingReferral, existingError });
-    
-    if (existingReferral) {
-      console.log('✅ [REFERRAL] Referral already exists, skipping');
-      return;
-    }
-    
-    // 4. INSERT the referral record
-    console.log('💾 [REFERRAL] Attempting to insert referral record...');
-    const payload = {
-      referrer_id: referrer.id,
-      referred_id: newUserId,
-      referral_code: referralCode.toUpperCase(),
-      status: 'PENDING',
-      created_at: new Date().toISOString(),
-    };
-    console.log('📝 [REFERRAL] Insert payload:', payload);
-    
-    const { data: inserted, error: insertError } = await supabase
-      .from('referrals')
-      .insert(payload)
-      .select()
-      .single();
-    
-    console.log('📦 [REFERRAL] Insert result:', { inserted, insertError });
-    
-    if (insertError) {
-      console.error('❌ [REFERRAL] INSERT FAILED:', insertError);
-      // Try to get more context
-      const { count } = await supabase.from('referrals').select('*', { count: 'exact', head: true });
-      console.log('📊 [REFERRAL] Current referrals count:', count);
-      return;
-    }
-    
-    console.log('✅ [REFERRAL] Successfully created referral record:', inserted);
-    
-  } catch (err) {
-    console.error('💥 [REFERRAL] Unhandled exception:', err);
-  }
-}
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -184,7 +109,7 @@ export function useAuth() {
       password: string,
       fullName?: string,
       country?: string | null,
-      referralCode?: string | null
+      referrerCode?: string | null  // ✅ Pass referral CODE (string), not ID
     ) => {
       const supabase = createClient();
       const { data, error } = await supabase.auth.signUp({
@@ -194,7 +119,6 @@ export function useAuth() {
           data: {
             full_name: fullName,
             country: country || null,
-            referral_code: referralCode?.toUpperCase() || null, // Store in user_metadata too
           },
           emailRedirectTo: typeof window !== 'undefined'
             ? `${window.location.origin}/auth/callback`
@@ -203,9 +127,9 @@ export function useAuth() {
       });
       if (error) throw error;
       
-      // Ensure profile is created with referral code
+      // Ensure profile is created with referrer_id resolved from code
       if (data.user) {
-        await ensureProfileExists(data.user, referralCode);
+        await ensureProfileExists(supabase, data.user, referrerCode);
       }
       
       return data;
@@ -254,7 +178,7 @@ export function useAuth() {
       }
 
       if (isSubscribed && session?.user) {
-        ensureProfileExists(session.user);
+        ensureProfileExists(supabase, session.user);
         setUser(session.user);
       } else if (isSubscribed) {
         setUser(null);
@@ -288,7 +212,7 @@ export function useAuth() {
         event === 'USER_UPDATED'
       ) {
         if (session?.user) {
-          ensureProfileExists(session.user);
+          ensureProfileExists(supabase, session.user);
           setUser(session.user);
         }
         setLoading(false);

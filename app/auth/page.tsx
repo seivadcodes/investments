@@ -1,4 +1,3 @@
-// /app/auth/page.tsx (AuthPage)
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
@@ -32,7 +31,6 @@ export default function AuthPage() {
   // Redirect to dashboard after auth
   useEffect(() => {
     if (!loading && user) {
-      // Preserve referral code in URL if present (for tracking)
       const refParam = searchParams?.get('ref');
       const redirectPath = refParam ? `/?ref=${refParam}` : '/';
       router.replace(redirectPath);
@@ -46,7 +44,6 @@ export default function AuthPage() {
       if (urlRef.trim()) {
         setDetectedReferral(urlRef.trim().toUpperCase());
         setReferralCode(urlRef.trim().toUpperCase());
-        // Auto-switch to sign-up mode if referral detected
         setAuthMode('sign-up');
       }
     }
@@ -101,21 +98,19 @@ export default function AuthPage() {
         if (!fullName.trim()) {
           throw new Error('Please enter your full name.');
         }
-        // Pass referral code (from input or URL) to signUp
+        
+        // ✅ Just pass the referral CODE string - useAuth handles the rest
         const refCode = referralCode.trim().toUpperCase() || detectedReferral || null;
+        
         await signUp(email, password, fullName.trim(), userCountry, refCode);
         
-        if (refCode) {
-          setSuccess(`Account created with referral ${refCode}! Check your email to verify.`);
-        } else {
-          setSuccess('Account created! Please check your email to verify.');
-        }
+        setSuccess('Account created! Check your email to verify.');
       }
     } catch (err: unknown) {
       if (err instanceof Error) {
         setError(err.message);
       } else {
-        setError('Authentication failed. Please try again.');
+        setError('Authentication failed.');
       }
     } finally {
       setSubmitting(false);
@@ -141,7 +136,6 @@ export default function AuthPage() {
     );
   }
 
-  // If already authenticated, show a clean redirect state
   if (user) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center">
@@ -245,7 +239,6 @@ export default function AuthPage() {
                       placeholder="REF-XXXXXX"
                       className="w-full pl-10 pr-10 py-3 border border-slate-300 rounded-xl focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none transition-all text-slate-900 placeholder:text-slate-400 bg-white uppercase"
                     />
-                    {/* Show detected referral from URL with copy button */}
                     {detectedReferral && !referralCode && (
                       <button
                         type="button"
