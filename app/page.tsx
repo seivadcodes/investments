@@ -65,7 +65,7 @@ export default function InvestorDashboardPage() {
     activeReferrals: 0,
     totalEarnings: 0
   });
-  const [referralDetails, setReferralDetails] = useState<ReferralDetail[]>([]); // 👈 NEW: Track individual referrals
+  const [referralDetails, setReferralDetails] = useState<ReferralDetail[]>([]);
   const [providers, setProviders] = useState<any[]>([]);
   const [notification, setNotification] = useState<NotificationState | null>(null);
   const [isRenting, setIsRenting] = useState(false);
@@ -114,7 +114,7 @@ export default function InvestorDashboardPage() {
       return server;
     }
 
-    const {  updated, error } = await supabase
+    const { data: updated, error } = await supabase
       .from('server_instances')
       .update({
         total_earned: (server.total_earned || 0) + newEarnings,
@@ -137,19 +137,19 @@ export default function InvestorDashboardPage() {
   // ============================================
   const calculateReferralBonuses = async (supabase: any, currentUser: any) => {
     // Find all active referrals for this user
-    const {  referrals, error: refError } = await supabase
+    const { data: referrals, error: refError } = await supabase
       .from('referrals')
-      .select('referee_id, status, created_at')
+      .select('referred_id, status, created_at')  // ✅ Fixed: referred_id instead of referee_id
       .eq('referrer_id', currentUser.id);
 
     if (refError || !referrals || referrals.length === 0) {
       return { bonus: 0, details: [] };
     }
 
-    const refereeIds = referrals.map((r: any) => r.referee_id);
+    const refereeIds = referrals.map((r: any) => r.referred_id);  // ✅ Fixed
     
     // Get all online servers belonging to referees
-    const {  servers, error: serverError } = await supabase
+    const { data: servers, error: serverError } = await supabase
       .from('server_instances')
       .select('user_id, daily_earnings, last_earned_at, created_at, id')
       .in('user_id', refereeIds)
@@ -158,7 +158,7 @@ export default function InvestorDashboardPage() {
     if (serverError || !servers || servers.length === 0) {
       // Still return referral details even if no earnings
       const details = referrals.map((r: any) => ({
-        referee_id: r.referee_id,
+        referee_id: r.referred_id,  // ✅ Fixed
         status: r.status,
         joined_at: r.created_at,
         total_earned: 0,
@@ -194,22 +194,30 @@ export default function InvestorDashboardPage() {
         refereeEarningsMap.set(server.user_id, current + bonus);
 
         // Record the bonus in referral_earnings table
-        await supabase.from('referral_earnings').insert({
-          user_id: currentUser.id,
-          referee_id: server.user_id,
-          amount: bonus,
-          created_at: now.toISOString()
-        });
+        const { error: insertError } = await supabase
+          .from('referral_earnings')
+          .insert({
+            referral_id: currentUser.id,  // ✅ Fixed: use referral_id
+            referee_id: server.user_id,
+            amount: bonus,
+            reason: 'Referral bonus from server earnings',
+            metadata: { server_id: server.id },
+            created_at: now.toISOString()
+          });
+
+        if (insertError) {
+          console.error('Failed to insert referral earning:', insertError);
+        }
       }
     }
 
     // Build referral details array
     const details = referrals.map((r: any) => ({
-      referee_id: r.referee_id,
+      referee_id: r.referred_id,  // ✅ Fixed
       status: r.status,
       joined_at: r.created_at,
-      total_earned: refereeEarningsMap.get(r.referee_id) || 0,
-      servers_count: refereeServersMap.get(r.referee_id) || 0
+      total_earned: refereeEarningsMap.get(r.referred_id) || 0,  // ✅ Fixed
+      servers_count: refereeServersMap.get(r.referred_id) || 0,  // ✅ Fixed
     }));
 
     return { bonus: totalBonus, details };
@@ -287,7 +295,7 @@ export default function InvestorDashboardPage() {
       const refEarningsRes = await supabase
         .from('referral_earnings')
         .select('amount')
-        .eq('user_id', currentUser.id);
+        .eq('referral_id', currentUser.id);  // ✅ Fixed: use referral_id
 
       // Calculate new bonuses from active referee servers
       const { bonus: newBonus, details } = await calculateReferralBonuses(supabase, currentUser);
@@ -421,20 +429,20 @@ export default function InvestorDashboardPage() {
       const supabase = createClient();
       const dailyEarnings = Math.floor(investment * 0.05 * 10) / 10; // 5% daily
       
-     const { data: serverData, error: insertError } = await supabase
-  .from('server_instances')
-  .insert({
-    user_id: currentUser.id,
-    investment,
-    daily_earnings: dailyEarnings,
-    status: 'INSTALLING',
-    total_earned: 0,
-    cpu_cores: Math.floor(investment / 100) + 1,
-    ram_gb: Math.floor(investment / 50) + 2,
-    storage_gb: Math.floor(investment / 10) + 20
-  })
-  .select()
-  .single();
+      const { data: serverData, error: insertError } = await supabase  // ✅ Fixed destructuring
+        .from('server_instances')
+        .insert({
+          user_id: currentUser.id,
+          investment,
+          daily_earnings: dailyEarnings,
+          status: 'INSTALLING',
+          total_earned: 0,
+          cpu_cores: Math.floor(investment / 100) + 1,
+          ram_gb: Math.floor(investment / 50) + 2,
+          storage_gb: Math.floor(investment / 10) + 20
+        })
+        .select()
+        .single();
       
       if (insertError) throw insertError;
       if (!serverData) throw new Error('No server data returned');
@@ -545,17 +553,17 @@ export default function InvestorDashboardPage() {
       const supabase = createClient();
       
       // Get unclaimed referral earnings
-      const { data: earnings, error: fetchError } = await supabase
-  .from('referral_earnings')
-  .select('amount')
-  .eq('user_id', currentUser.id);
+      const { data: earnings, error: fetchError } = await supabase  // ✅ Fixed destructuring
+        .from('referral_earnings')
+        .select('amount')
+        .eq('referral_id', currentUser.id);  // ✅ Fixed: use referral_id
 
-if (fetchError || !earnings || earnings.length === 0) {
-  showNotification('No referral earnings to claim', 'info');
-  return;
-}
+      if (fetchError || !earnings || earnings.length === 0) {
+        showNotification('No referral earnings to claim', 'info');
+        return;
+      }
 
-const totalToClaim = earnings.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
+      const totalToClaim = earnings.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
       
       if (totalToClaim < 0.01) {
         showNotification('Minimum claim amount is 0.01 TLC', 'info');
@@ -567,7 +575,7 @@ const totalToClaim = earnings.reduce((sum: number, e: any) => sum + (e.amount ||
       await supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', currentUser.id);
       
       // Clear claimed earnings
-      await supabase.from('referral_earnings').delete().eq('user_id', currentUser.id);
+      await supabase.from('referral_earnings').delete().eq('referral_id', currentUser.id);
       
       // Log transaction
       await supabase.from('wallet_transactions').insert({
@@ -798,11 +806,11 @@ const totalToClaim = earnings.reduce((sum: number, e: any) => sum + (e.amount ||
               <NetworkInterface
                 referralCode={referralCode}
                 referralStats={referralStats}
-                referralDetails={referralDetails} // 👈 NEW: Pass referral details
+                referralDetails={referralDetails}
                 providers={providers}
                 onCopyCode={copyReferralCode}
                 onProviderClick={(id) => router.push(`/broker/${id}`)}
-                onClaimEarnings={handleClaimReferralEarnings} // 👈 NEW: Claim button handler
+                onClaimEarnings={handleClaimReferralEarnings}
               />
             )}
           </motion.div>
