@@ -51,7 +51,7 @@ export default function WalletPage() {
   const router = useRouter();
   
   const [balance, setBalance] = useState(0);
-  const [baseBalance, setBaseBalance] = useState(0); // The amount locked from initial redeem/deposit
+  const [baseBalance, setBaseBalance] = useState(0);
   const [isBroker, setIsBroker] = useState(false);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [transferCodes, setTransferCodes] = useState<TransferCode[]>([]);
@@ -72,9 +72,6 @@ export default function WalletPage() {
     isBrokerRef.current = isBroker;
   }, [balance, baseBalance, isBroker]);
 
-  // 🔑 LOGIC UPDATE: 
-  // Regular users can ONLY transfer what they have EARNED (Total - Base).
-  // Brokers can transfer everything.
   const getTransferableBalance = useCallback(() => {
     if (isBrokerRef.current) return balanceRef.current; 
     return Math.max(0, balanceRef.current - baseBalanceRef.current); 
@@ -87,16 +84,17 @@ export default function WalletPage() {
       setRefreshing(true);
       const supabase = createClient();
       
-      const response = await supabase
+      // ✅ CORRECT: destructure data as profile
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('wallet_balance, base_balance, is_broker')
         .eq('id', user.id)
         .single();
       
-      if (response.error) {
-        console.error('Profile fetch error:', response.error);
+      if (profileError) {
+        console.error('Profile fetch error:', profileError);
         
-        if (response.error.code === 'PGRST116') {
+        if (profileError.code === 'PGRST116') {
           const { error: insertError } = await supabase
             .from('profiles')
             .insert({
@@ -122,11 +120,10 @@ export default function WalletPage() {
         } else {
           showNotification("Could not load wallet data", "error");
         }
-      } else {
-        const profile = response.data;
-        const newBalance = profile?.wallet_balance ?? 0;
-        const newBase = profile?.base_balance ?? 0;
-        const newIsBroker = profile?.is_broker ?? false;
+      } else if (profile) {
+        const newBalance = Math.floor(profile.wallet_balance ?? 0);
+        const newBase = Math.floor(profile.base_balance ?? 0);
+        const newIsBroker = profile.is_broker ?? false;
         
         setBalance(newBalance);
         setBaseBalance(newBase);
@@ -136,29 +133,31 @@ export default function WalletPage() {
         isBrokerRef.current = newIsBroker;
       }
       
-      const txnsResponse = await supabase
+      // ✅ CORRECT: destructure data as txns
+      const { data: txns, error: txnsError } = await supabase
         .from('wallet_transactions')
         .select('*')
         .eq('user_id', user.id)
         .order('created_at', { ascending: false })
         .limit(50);
       
-      if (!txnsResponse.error && txnsResponse.data) {
-        setTransactions(txnsResponse.data);
+      if (!txnsError && txns) {
+        setTransactions(txns);
       }
       
-      const codesResponse = await supabase
+      // ✅ CORRECT: destructure data as codes
+      const { data: codes, error: codesError } = await supabase
         .from('transfer_codes')
         .select('*')
         .eq('sender_id', user.id)
         .eq('status', 'ACTIVE')
         .order('created_at', { ascending: false });
       
-      if (!codesResponse.error && codesResponse.data) {
-        setTransferCodes(codesResponse.data);
+      if (!codesError && codes) {
+        setTransferCodes(codes);
       }
     } catch (err) {
-      console.warn('Could not fetch wallet data:', err);
+      console.warn('Could not fetch wallet ', err);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -183,13 +182,11 @@ export default function WalletPage() {
     
     const transferable = getTransferableBalance();
     
-    // 🔑 Brokers bypass transferable balance check
     if (!isBrokerRef.current && amount > transferable) {
       showNotification(`You can only transfer profits earned from servers. Available: ${transferable} TLC`, "error");
       return;
     }
     
-    // Regular users still have minimum
     if (!isBrokerRef.current && amount < 10) {
       showNotification("Minimum transfer is 10 TLC", "error");
       return;
@@ -200,14 +197,15 @@ export default function WalletPage() {
       const code = 'TLC-' + Math.random().toString(36).substr(2, 9).toUpperCase();
       const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
       
-      const newBalance = balanceRef.current - amount;
+      const amountInt = Math.floor(amount);
+      const newBalance = Math.floor(balanceRef.current - amountInt);
       
       const { error: codeError } = await supabase
         .from('transfer_codes')
         .insert({
           code,
           sender_id: user!.id,
-          amount,
+          amount: amountInt,
           status: 'ACTIVE',
           expires_at: expiresAt
         });
@@ -219,7 +217,7 @@ export default function WalletPage() {
         .insert({
           user_id: user!.id,
           type: 'GIFT_SENT',
-          amount: -amount,
+          amount: -amountInt,
           balance_after: newBalance,
           description: isBrokerRef.current 
             ? `Gift code ${code} (Broker distribution)` 
@@ -241,15 +239,16 @@ export default function WalletPage() {
       setTransferAmount('');
       showNotification(isBrokerRef.current ? "Broker code generated!" : "Gift code generated!", "success");
       
-      const codesResponse = await supabase
+      // ✅ CORRECT: destructure data as codes
+      const { data: codes } = await supabase
         .from('transfer_codes')
         .select('*')
         .eq('sender_id', user!.id)
         .eq('status', 'ACTIVE')
         .order('created_at', { ascending: false });
       
-      if (!codesResponse.error && codesResponse.data) {
-        setTransferCodes(codesResponse.data);
+      if (codes) {
+        setTransferCodes(codes);
       }
       
     } catch (err: any) {
@@ -277,22 +276,21 @@ export default function WalletPage() {
     try {
       const supabase = createClient();
       
-      const codeResponse = await supabase
+      // ✅ CORRECT DESTRUCTURING: { data: codeData, error }
+      const { data: codeData, error: codeError } = await supabase
         .from('transfer_codes')
         .select('*')
         .eq('code', cleanCode)
         .single();
       
-      if (codeResponse.error) {
-        if (codeResponse.error.code === 'PGRST116') {
-          showNotification(`Code "${cleanCode}" not found. Check for typos.`, "error");
+      if (codeError) {
+        if (codeError.code === 'PGRST116') {
+          showNotification(`Code "${cleanCode}" not found.`, "error");
         } else {
-          showNotification("Database error: " + codeResponse.error.message, "error");
+          showNotification("Error: " + codeError.message, "error");
         }
         return;
       }
-      
-      const codeData = codeResponse.data;
       
       if (!codeData) {
         showNotification("Code does not exist.", "error");
@@ -314,8 +312,14 @@ export default function WalletPage() {
         return;
       }
       
-      const newBalance = balanceRef.current + codeData.amount;
-      const newBaseBalance = baseBalanceRef.current + codeData.amount;
+      const rawAmount = Number(codeData.amount);
+      const amountInt = Math.floor(rawAmount);
+      
+      const currentBalance = Math.floor(balanceRef.current);
+      const currentBaseBalance = Math.floor(baseBalanceRef.current);
+      
+      const newBalance = currentBalance + amountInt;
+      const newBaseBalance = currentBaseBalance + amountInt;
       
       const { error: updateCodeError } = await supabase
         .from('transfer_codes')
@@ -327,19 +331,29 @@ export default function WalletPage() {
         .eq('code', cleanCode)
         .eq('status', 'ACTIVE');
       
-      if (updateCodeError) throw updateCodeError;
+      if (updateCodeError) {
+        if (updateCodeError.code === 'PGRST116') {
+          showNotification("❌ This code was just redeemed by someone else.", "error");
+        } else {
+          throw updateCodeError;
+        }
+        return;
+      }
       
       const { error: txnError } = await supabase
         .from('wallet_transactions')
         .insert({
           user_id: user!.id,
           type: 'GIFT_RECEIVED',
-          amount: codeData.amount,
+          amount: amountInt,
           balance_after: newBalance,
           description: `Redeemed code ${cleanCode} (Capital locked)`
         });
       
-      if (txnError) throw txnError;
+      if (txnError) {
+        console.error('Transaction insert failed:', txnError);
+        throw new Error('Failed to record transaction: ' + txnError.message);
+      }
       
       const { error: updateError } = await supabase
         .from('profiles')
@@ -357,21 +371,22 @@ export default function WalletPage() {
       baseBalanceRef.current = newBaseBalance;
       
       setRedeemCode('');
-      showNotification(`✅ Received ${codeData.amount.toLocaleString()} TLC!`, "success");
+      showNotification(`✅ Received ${amountInt.toLocaleString()} TLC!`, "success");
       
-      const txnsResponse = await supabase
+      // ✅ CORRECT: { data: txns, error }
+      const { data: txns } = await supabase
         .from('wallet_transactions')
         .select('*')
         .eq('user_id', user!.id)
         .order('created_at', { ascending: false })
         .limit(50);
       
-      if (!txnsResponse.error && txnsResponse.data) {
-        setTransactions(txnsResponse.data);
+      if (txns) {
+        setTransactions(txns);
       }
       
     } catch (err: any) {
-      console.error('💥 Unexpected error:', err);
+      console.error('💥 Redeem error:', err);
       showNotification("❌ " + (err.message || "Failed to redeem code"), "error");
     }
   };
@@ -398,8 +413,6 @@ export default function WalletPage() {
   }
 
   const transferableBalance = getTransferableBalance();
-  // Calculate invested capital (Total - Earned Profits). 
-  // Since Base Balance is the "locked" capital, we display that as the investment anchor.
   const investedCapital = baseBalance; 
 
   return (
@@ -457,7 +470,6 @@ export default function WalletPage() {
             </div>
           </div>
           
-          {/* 🔑 Broker Badge */}
           {isBroker && (
             <div className="mb-4 p-4 bg-yellow-500/20 border border-yellow-500/30 rounded-xl flex items-center gap-3">
               <Crown className="w-6 h-6 text-yellow-400" />
@@ -468,7 +480,6 @@ export default function WalletPage() {
             </div>
           )}
           
-          {/* Investment Breakdown Summary */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 pt-4 border-t border-white/10">
             <div className="bg-white/10 rounded-lg p-3 text-center">
               <div className="flex items-center justify-center gap-1 mb-1">

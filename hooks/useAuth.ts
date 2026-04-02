@@ -78,51 +78,90 @@ async function ensureProfileExists(user: User, referralCode?: string | null) {
 
 // Helper: Create referral record linking new user to referrer
 async function createReferralRecord(supabase: ReturnType<typeof createClient>, newUserId: string, referralCode: string) {
+  console.log('🔗 [REFERRAL] Starting createReferralRecord', { newUserId, referralCode });
+  
   try {
-    // Find the referrer by their referral_code
+    // 1. Find the referrer
+    console.log('🔍 [REFERRAL] Looking up referrer with code:', referralCode.toUpperCase());
     const { data: referrer, error: referrerError } = await supabase
       .from('profiles')
-      .select('id')
+      .select('id, referral_code, email')
       .eq('referral_code', referralCode.toUpperCase())
-      .single();
-
-    if (referrerError || !referrer) {
-      console.warn('Referral code not found:', referralCode);
+      .maybeSingle(); // Use maybeSingle to avoid PGRST116 error
+    
+    console.log('📦 [REFERRAL] Referrer lookup result:', { referrer, referrerError });
+    
+    if (referrerError) {
+      console.error('❌ [REFERRAL] Database error:', referrerError);
       return;
     }
-
-    // Don't allow self-referral
-    if (referrer.id === newUserId) return;
-
-    // Check if referral already exists to avoid duplicates
-    const { data: existingReferral } = await supabase
+    
+    if (!referrer) {
+      console.warn('⚠️ [REFERRAL] No referrer found for code:', referralCode);
+      // Let's also check if ANY profiles have referral_code set
+      const { data: allProfiles } = await supabase
+        .from('profiles')
+        .select('id, referral_code, email')
+        .limit(5);
+      console.log('📋 [REFERRAL] Sample profiles:', allProfiles);
+      return;
+    }
+    
+    // 2. Self-referral check
+    if (referrer.id === newUserId) {
+      console.log('🚫 [REFERRAL] Self-referral blocked');
+      return;
+    }
+    
+    // 3. Check for existing referral
+    console.log('🔎 [REFERRAL] Checking for existing referral record...');
+    const { data: existingReferral, error: existingError } = await supabase
       .from('referrals')
-      .select('id')
+      .select('id, status')
       .eq('referrer_id', referrer.id)
       .eq('referred_id', newUserId)
       .maybeSingle();
-
-    if (existingReferral) return; // Already tracked
-
-    // Create the referral record
-    const { error: insertError } = await supabase
-      .from('referrals')
-      .insert({
-        referrer_id: referrer.id,
-        referred_id: newUserId,
-        referral_code: referralCode.toUpperCase(),
-        status: 'PENDING', // Will become ACTIVE after email verification or first action
-        created_at: new Date().toISOString(),
-      });
-
-    if (insertError) {
-      console.error('Failed to create referral record:', insertError);
+    
+    console.log('📦 [REFERRAL] Existing referral check:', { existingReferral, existingError });
+    
+    if (existingReferral) {
+      console.log('✅ [REFERRAL] Referral already exists, skipping');
+      return;
     }
+    
+    // 4. INSERT the referral record
+    console.log('💾 [REFERRAL] Attempting to insert referral record...');
+    const payload = {
+      referrer_id: referrer.id,
+      referred_id: newUserId,
+      referral_code: referralCode.toUpperCase(),
+      status: 'PENDING',
+      created_at: new Date().toISOString(),
+    };
+    console.log('📝 [REFERRAL] Insert payload:', payload);
+    
+    const { data: inserted, error: insertError } = await supabase
+      .from('referrals')
+      .insert(payload)
+      .select()
+      .single();
+    
+    console.log('📦 [REFERRAL] Insert result:', { inserted, insertError });
+    
+    if (insertError) {
+      console.error('❌ [REFERRAL] INSERT FAILED:', insertError);
+      // Try to get more context
+      const { count } = await supabase.from('referrals').select('*', { count: 'exact', head: true });
+      console.log('📊 [REFERRAL] Current referrals count:', count);
+      return;
+    }
+    
+    console.log('✅ [REFERRAL] Successfully created referral record:', inserted);
+    
   } catch (err) {
-    console.error('Referral tracking error:', err);
+    console.error('💥 [REFERRAL] Unhandled exception:', err);
   }
 }
-
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
