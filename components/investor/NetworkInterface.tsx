@@ -6,7 +6,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   Users, Gift, Share2, Copy, CheckCircle,
   Network, ShieldCheck, Star, MapPin, TrendingUp, Award,
-  Phone, DollarSign, Link2, Download, ArrowRight, Loader2
+  Phone, DollarSign, Link2, Download, ArrowRight, Loader2,
+  Wallet, Clock, Server
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -19,12 +20,23 @@ interface ReferralStats {
   totalEarnings: number;
 }
 
+interface ReferralDetail {
+  referee_id: string;
+  referee_email?: string;
+  status: string;
+  joined_at: string;
+  total_earned: number;
+  servers_count: number;
+}
+
 interface NetworkInterfaceProps {
   referralCode: string;
   referralStats: ReferralStats;
+  referralDetails?: ReferralDetail[]; // 👈 NEW: Detailed referral list
   providers: any[];
   onCopyCode: () => void;
   onProviderClick: (id: string) => void;
+  onClaimEarnings?: () => void; // 👈 NEW: Claim handler
 }
 
 // Helper: Generate referral link
@@ -82,16 +94,20 @@ const downloadQRCode = async (code: string, onLoading: (loading: boolean) => voi
 };
 
 // ============================================
-// INTERNAL: ReferralPanel - WITH WORKING BUTTONS
+// INTERNAL: ReferralPanel - WITH DETAILS & CLAIM
 // ============================================
 const ReferralPanel = ({ 
   code, 
   stats, 
-  onCopy 
+  referralDetails,
+  onCopy,
+  onClaimEarnings
 }: { 
   code: string; 
   stats: ReferralStats; 
+  referralDetails?: ReferralDetail[];
   onCopy: () => void;
+  onClaimEarnings?: () => void;
 }) => {
   const [qrLoading, setQrLoading] = useState(false);
   const [copyLinkSuccess, setCopyLinkSuccess] = useState(false);
@@ -156,7 +172,55 @@ const ReferralPanel = ({
         </div>
       </div>
 
-      {/* Share Section - NOW WITH REAL FUNCTIONALITY */}
+      {/* 👈 NEW: Referral Details List */}
+      {referralDetails && referralDetails.length > 0 && (
+        <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200">
+          <h4 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
+            <Users className="w-5 h-5" /> Your Referrals ({referralDetails.length})
+          </h4>
+          <div className="space-y-3 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
+            {referralDetails.map((ref, index) => (
+              <div key={index} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg border border-slate-200 hover:bg-slate-100 transition-colors">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center font-bold text-blue-600 flex-shrink-0">
+                    {ref.referee_id.substring(0, 2).toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-medium text-slate-800 text-sm truncate">
+                      User {ref.referee_id.substring(0, 8)}...
+                    </p>
+                    <div className="flex items-center gap-2 text-xs text-slate-500">
+                      <span className="flex items-center gap-1">
+                        <Clock className="w-3 h-3" /> {new Date(ref.joined_at).toLocaleDateString()}
+                      </span>
+                      <span className="flex items-center gap-1">
+                        <Server className="w-3 h-3" /> {ref.servers_count} servers
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="font-bold text-green-600">+{ref.total_earned.toFixed(3)} TLC</p>
+                  <p className="text-[10px] text-slate-400">Your bonus (10%)</p>
+                </div>
+              </div>
+            ))}
+          </div>
+          
+          {/* Claim Button */}
+          {stats.totalEarnings > 0 && onClaimEarnings && (
+            <button
+              onClick={onClaimEarnings}
+              className="w-full mt-4 py-3 bg-green-600 text-white font-bold rounded-xl hover:bg-green-500 transition-colors flex items-center justify-center gap-2 shadow-lg shadow-green-200"
+            >
+              <Wallet className="w-5 h-5" />
+              Claim {stats.totalEarnings.toFixed(2)} TLC
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Share Section */}
       <div className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-200">
         <h4 className="font-bold text-slate-800 mb-3 sm:mb-4 flex items-center gap-2 text-base">
           <Share2 className="w-4 h-4 sm:w-5 sm:h-5" /> Share Your Referral Link
@@ -296,9 +360,11 @@ const ProviderList = ({ providers, onProviderClick }: {
 export function NetworkInterface({ 
   referralCode, 
   referralStats, 
+  referralDetails,
   providers, 
   onCopyCode, 
-  onProviderClick 
+  onProviderClick,
+  onClaimEarnings
 }: NetworkInterfaceProps) {
   const [tab, setTab] = useState<'REFERRALS' | 'PROVIDERS'>('REFERRALS');
 
@@ -339,7 +405,9 @@ export function NetworkInterface({
               <ReferralPanel 
                 code={referralCode} 
                 stats={referralStats} 
+                referralDetails={referralDetails}
                 onCopy={onCopyCode} 
+                onClaimEarnings={onClaimEarnings}
               />
             </div>
           )}
