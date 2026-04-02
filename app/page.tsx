@@ -493,52 +493,51 @@ export default function InvestorDashboardPage() {
     }
   };
 
-  // 🔑 WITHDRAW EARNINGS
   const handleWithdraw = async (serverId: string) => {
-    const currentUser = userRef.current;
-    
-    if (!currentUser?.id) {
-      showNotification('Please log in', 'error');
-      return;
-    }
+  const currentUser = userRef.current;
+  
+  if (!currentUser?.id) {
+    showNotification('Please log in', 'error');
+    return;
+  }
 
-    const server = servers.find(s => s.id === serverId);
-    if (!server || server.total_earned <= 0) return;
+  const server = servers.find(s => s.id === serverId);
+  if (!server || server.total_earned <= 0) return;
+  
+  try {
+    const supabase = createClient();
     
-    try {
-      const supabase = createClient();
-      
-      const now = new Date();
-      const lastUpdate = new Date(server.last_earned_at || server.created_at);
-      const minutesOnline = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
-      const pendingEarnings = server.daily_earnings * (minutesOnline / 1440);
-      const finalTotal = (server.total_earned || 0) + pendingEarnings;
-      
-      await supabase.from('server_instances').update({ 
-        total_earned: 0,
-        last_earned_at: now.toISOString()
-      }).eq('id', serverId);
-      
-      const newBalance = balanceRef.current + finalTotal;
-      await supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', currentUser.id);
-      
-      await supabase.from('wallet_transactions').insert({
-        user_id: currentUser.id,
-        type: 'EARN',
-        amount: finalTotal,
-        balance_after: newBalance,
-        description: `Server Earnings Withdrawal (${server.investment} TLC node)`
-      });
-      
-      setBalance(newBalance);
+    // ✅ Single RPC call - everything happens atomically
+    const { data, error } = await supabase.rpc('withdraw_server_earnings_with_referral', {
+      p_user_id: currentUser.id,
+      p_server_id: serverId
+    });
+    
+    if (error) throw error;
+    
+    if (data && data.success) {
+      setBalance(data.new_balance);
       setServers(prev => prev.map(s => s.id === serverId ? { ...s, total_earned: 0 } : s));
-      showNotification(`Withdrew ${finalTotal.toFixed(1)} TLC`, 'success');
+      
+      if (data.referrer_bonus > 0) {
+        showNotification(
+          `Withdrew ${data.withdrawn_amount.toFixed(1)} TLC. Referrer earned ${data.referrer_bonus.toFixed(2)} TLC!`,
+          'success'
+        );
+      } else {
+        showNotification(`Withdrew ${data.withdrawn_amount.toFixed(1)} TLC`, 'success');
+      }
+      
       fetchDashboardData();
-    } catch (err) {
-      console.error('Withdraw error:', err);
-      showNotification('Withdrawal failed', 'error');
+    } else {
+      showNotification(data?.message || 'Withdrawal failed', 'error');
     }
-  };
+    
+  } catch (err: any) {
+    console.error('Withdraw error:', err);
+    showNotification(err.message || 'Withdrawal failed', 'error');
+  }
+};
 
   // 🔑 CLAIM REFERRAL EARNINGS (Move from referral_earnings to wallet)
   const handleClaimReferralEarnings = async () => {
