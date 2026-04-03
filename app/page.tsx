@@ -1,4 +1,3 @@
-// InvestorDashboardPage.tsx
 'use client';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -133,97 +132,6 @@ export default function InvestorDashboardPage() {
   };
 
   // ============================================
-  // 🔑 HELPER: Calculate Referral Bonuses (10% of referee's earnings)
-  // ============================================
-  const calculateReferralBonuses = async (supabase: any, currentUser: any) => {
-    // Find all active referrals for this user
-    const { data: referrals, error: refError } = await supabase
-      .from('referrals')
-      .select('referred_id, status, created_at')  // ✅ Fixed: referred_id instead of referee_id
-      .eq('referrer_id', currentUser.id);
-
-    if (refError || !referrals || referrals.length === 0) {
-      return { bonus: 0, details: [] };
-    }
-
-    const refereeIds = referrals.map((r: any) => r.referred_id);  // ✅ Fixed
-    
-    // Get all online servers belonging to referees
-    const { data: servers, error: serverError } = await supabase
-      .from('server_instances')
-      .select('user_id, daily_earnings, last_earned_at, created_at, id')
-      .in('user_id', refereeIds)
-      .eq('status', 'ONLINE');
-
-    if (serverError || !servers || servers.length === 0) {
-      // Still return referral details even if no earnings
-      const details = referrals.map((r: any) => ({
-        referee_id: r.referred_id,  // ✅ Fixed
-        status: r.status,
-        joined_at: r.created_at,
-        total_earned: 0,
-        servers_count: 0
-      }));
-      return { bonus: 0, details };
-    }
-
-    let totalBonus = 0;
-    const now = new Date();
-    const refereeEarningsMap = new Map<string, number>();
-    const refereeServersMap = new Map<string, number>();
-
-    // Group servers by referee
-    servers.forEach((s: any) => {
-      refereeServersMap.set(s.user_id, (refereeServersMap.get(s.user_id) || 0) + 1);
-    });
-
-    for (const server of servers) {
-      const lastUpdate = new Date(server.last_earned_at || server.created_at);
-      const minutesOnline = (now.getTime() - lastUpdate.getTime()) / (1000 * 60);
-      
-      if (minutesOnline < 1) continue;
-
-      const refereeEarnings = server.daily_earnings * (minutesOnline / 1440);
-      const bonus = refereeEarnings * 0.10; // 10% referral bonus
-      
-      if (bonus > 0.0001) {
-        totalBonus += bonus;
-        
-        // Track earnings per referee
-        const current = refereeEarningsMap.get(server.user_id) || 0;
-        refereeEarningsMap.set(server.user_id, current + bonus);
-
-        // Record the bonus in referral_earnings table
-        const { error: insertError } = await supabase
-          .from('referral_earnings')
-          .insert({
-            referral_id: currentUser.id,  // ✅ Fixed: use referral_id
-            referee_id: server.user_id,
-            amount: bonus,
-            reason: 'Referral bonus from server earnings',
-            metadata: { server_id: server.id },
-            created_at: now.toISOString()
-          });
-
-        if (insertError) {
-          console.error('Failed to insert referral earning:', insertError);
-        }
-      }
-    }
-
-    // Build referral details array
-    const details = referrals.map((r: any) => ({
-      referee_id: r.referred_id,  // ✅ Fixed
-      status: r.status,
-      joined_at: r.created_at,
-      total_earned: refereeEarningsMap.get(r.referred_id) || 0,  // ✅ Fixed
-      servers_count: refereeServersMap.get(r.referred_id) || 0,  // ✅ Fixed
-    }));
-
-    return { bonus: totalBonus, details };
-  };
-
-  // ============================================
   // FETCH DATA FROM SUPABASE (REAL DB)
   // ============================================
   const fetchDashboardData = useCallback(async () => {
@@ -288,38 +196,80 @@ export default function InvestorDashboardPage() {
         setDailyEarnings(dailyTotal);
       }
 
-      // 3. 🔑 Referral Stats AND Bonus Calculation
-      console.log('[Dashboard] Fetching referrals and calculating bonuses...');
-      
+      // 3. 🔑 Fetch Referral Stats (READ ONLY - no calculation)
+      console.log('[Dashboard] Fetching referral stats...');
+
       // Get historical referral earnings from database
       const refEarningsRes = await supabase
         .from('referral_earnings')
         .select('amount')
-        .eq('referral_id', currentUser.id);  // ✅ Fixed: use referral_id
-
-      // Calculate new bonuses from active referee servers
-      const { bonus: newBonus, details } = await calculateReferralBonuses(supabase, currentUser);
-      
-      // Set referral details for display
-      setReferralDetails(details);
+        .eq('referral_id', currentUser.id);
 
       // Get referral counts
       const refCountRes = await supabase
         .from('referrals')
-        .select('id, status', { count: 'exact' })
+        .select('id, status, referred_id', { count: 'exact' })
         .eq('referrer_id', currentUser.id);
-      
+
+      // Get referral details for display
+      const refDetailsRes = await supabase
+        .from('referrals')
+        .select(`
+          referred_id,
+          status,
+          created_at,
+          profiles!referred_id (
+            email
+          )
+        `)
+        .eq('referrer_id', currentUser.id)
+        .order('created_at', { ascending: false });
+
       if (refCountRes.data) {
-        setReferralStats(prev => ({
-          ...prev,
-          totalReferrals: refCountRes.data?.length || 0,
-          activeReferrals: refCountRes.data?.filter((r: any) => r.status === 'ACTIVE').length || 0
-        }));
+        setReferralStats({
+          totalReferrals: refCountRes.data.length || 0,
+          activeReferrals: refCountRes.data.filter((r: any) => r.status === 'ACTIVE').length || 0,
+          totalEarnings: 0 // Will be calculated below
+        });
       }
-      
+
       if (refEarningsRes.data) {
         const historicalTotal = refEarningsRes.data.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
-        setReferralStats(prev => ({ ...prev, totalEarnings: historicalTotal + newBonus }));
+        setReferralStats(prev => ({ ...prev, totalEarnings: historicalTotal }));
+      }
+
+      // Build referral details array
+      if (refDetailsRes.data) {
+        const details = await Promise.all(
+          refDetailsRes.data.map(async (r: any) => {
+            // Count servers for this referee
+            const { count: serverCount } = await supabase
+              .from('server_instances')
+              .select('*', { count: 'exact', head: true })
+              .eq('user_id', r.referred_id)
+              .eq('status', 'ONLINE');
+
+            // Get total earnings for this referee from referral_earnings
+            const { data: earnings } = await supabase
+              .from('referral_earnings')
+              .select('amount')
+              .eq('referral_id', currentUser.id)
+              .eq('referee_id', r.referred_id);
+
+            const totalEarned = earnings?.reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
+
+            return {
+              referee_id: r.referred_id,
+              referee_email: r.profiles?.email,
+              status: r.status,
+              joined_at: r.created_at,
+              total_earned: totalEarned,
+              servers_count: serverCount || 0
+            };
+          })
+        );
+        
+        setReferralDetails(details);
       }
 
       // 4. Providers
@@ -429,7 +379,7 @@ export default function InvestorDashboardPage() {
       const supabase = createClient();
       const dailyEarnings = Math.floor(investment * 0.05 * 10) / 10; // 5% daily
       
-      const { data: serverData, error: insertError } = await supabase  // ✅ Fixed destructuring
+      const { data: serverData, error: insertError } = await supabase
         .from('server_instances')
         .insert({
           user_id: currentUser.id,
@@ -494,50 +444,57 @@ export default function InvestorDashboardPage() {
   };
 
   const handleWithdraw = async (serverId: string) => {
-  const currentUser = userRef.current;
-  
-  if (!currentUser?.id) {
-    showNotification('Please log in', 'error');
-    return;
-  }
+    const currentUser = userRef.current;
+    
+    if (!currentUser?.id) {
+      showNotification('Please log in', 'error');
+      return;
+    }
 
-  const server = servers.find(s => s.id === serverId);
-  if (!server || server.total_earned <= 0) return;
-  
-  try {
-    const supabase = createClient();
+    const server = servers.find(s => s.id === serverId);
+    if (!server || server.total_earned <= 0) return;
     
-    // ✅ Single RPC call - everything happens atomically
-    const { data, error } = await supabase.rpc('withdraw_server_earnings_with_referral', {
-      p_user_id: currentUser.id,
-      p_server_id: serverId
-    });
-    
-    if (error) throw error;
-    
-    if (data && data.success) {
-      setBalance(data.new_balance);
-      setServers(prev => prev.map(s => s.id === serverId ? { ...s, total_earned: 0 } : s));
+    try {
+      const supabase = createClient();
       
-      if (data.referrer_bonus > 0) {
-        showNotification(
-          `Withdrew ${data.withdrawn_amount.toFixed(1)} TLC. Referrer earned ${data.referrer_bonus.toFixed(2)} TLC!`,
-          'success'
-        );
+      // ✅ Single RPC call - everything happens atomically
+      const { data, error } = await supabase.rpc('withdraw_server_earnings_with_referral', {
+        p_user_id: currentUser.id,
+        p_server_id: serverId
+      });
+      
+      if (error) throw error;
+      
+      console.log('Withdraw response:', data); // Debug log
+      
+      if (data && data.success) {
+        setBalance(data.new_balance);
+        setServers(prev => prev.map(s => s.id === serverId ? { ...s, total_earned: 0 } : s));
+        
+        if (data.referrer_bonus > 0) {
+          showNotification(
+            `Withdrew ${data.withdrawn_amount.toFixed(2)} TLC. Referrer earned ${data.referrer_bonus.toFixed(2)} TLC!`,
+            'success'
+          );
+        } else {
+          showNotification(`Withdrew ${data.withdrawn_amount.toFixed(2)} TLC`, 'success');
+        }
+        
+        // Log debug info if available
+        if (data.debug_info) {
+          console.log('Debug info:', data.debug_info);
+        }
+        
+        fetchDashboardData();
       } else {
-        showNotification(`Withdrew ${data.withdrawn_amount.toFixed(1)} TLC`, 'success');
+        showNotification(data?.message || 'Withdrawal failed', 'error');
       }
       
-      fetchDashboardData();
-    } else {
-      showNotification(data?.message || 'Withdrawal failed', 'error');
+    } catch (err: any) {
+      console.error('Withdraw error:', err);
+      showNotification(err.message || 'Withdrawal failed', 'error');
     }
-    
-  } catch (err: any) {
-    console.error('Withdraw error:', err);
-    showNotification(err.message || 'Withdrawal failed', 'error');
-  }
-};
+  };
 
   // 🔑 CLAIM REFERRAL EARNINGS (Move from referral_earnings to wallet)
   const handleClaimReferralEarnings = async () => {
@@ -552,10 +509,10 @@ export default function InvestorDashboardPage() {
       const supabase = createClient();
       
       // Get unclaimed referral earnings
-      const { data: earnings, error: fetchError } = await supabase  // ✅ Fixed destructuring
+      const { data: earnings, error: fetchError } = await supabase
         .from('referral_earnings')
         .select('amount')
-        .eq('referral_id', currentUser.id);  // ✅ Fixed: use referral_id
+        .eq('referral_id', currentUser.id);
 
       if (fetchError || !earnings || earnings.length === 0) {
         showNotification('No referral earnings to claim', 'info');

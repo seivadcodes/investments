@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase';
 
-// Helper: Ensure profile exists and set referrer_id if provided
+// Helper: Ensure profile exists and create referral record if needed
 async function ensureProfileExists(
   supabase: ReturnType<typeof createClient>,
   user: User, 
@@ -27,6 +27,7 @@ async function ensureProfileExists(
     }
   }
 
+  // Check if profile exists
   const { data: existingProfile, error: fetchError } = await supabase
     .from('profiles')
     .select('id, referral_code, referrer_id')
@@ -52,11 +53,14 @@ async function ensureProfileExists(
         email: user.email,
         full_name: fullName,
         country,
-        referral_code: user.id.substring(0, 6).toUpperCase(), // Auto-generate if not set
-        referrer_id: referrerId, // ✅ Set referrer here
+        referral_code: user.id.substring(0, 6).toUpperCase(),
+        referrer_id: referrerId,
         last_seen: now,
         created_at: now,
         onboarding_completed: false,
+        wallet_balance: 0,
+        base_balance: 0,
+        is_broker: false,
         height_unit: 'cm',
         weight_unit: 'kg',
       });
@@ -64,12 +68,46 @@ async function ensureProfileExists(
     if (insertError && insertError.code !== '23505') {
       console.error('Failed to create profile:', insertError);
     }
+
+    // ✅ CRITICAL: Create referral record if user has a referrer
+    if (referrerId) {
+      const { error: referralError } = await supabase
+        .from('referrals')
+        .insert({
+          referrer_id: referrerId,
+          referred_id: user.id,
+          status: 'ACTIVE',
+          referral_code: referrerCode?.toUpperCase() || '',
+          created_at: now
+        });
+      
+      if (referralError) {
+        console.error('Failed to create referral record:', referralError);
+      } else {
+        console.log('✅ Referral record created successfully');
+      }
+    }
   } else if (existingProfile) {
     // Profile exists → update last_seen and referrer_id if not set
     const updateData: Record<string, any> = { last_seen: now };
     
     if (!existingProfile.referrer_id && referrerId) {
       updateData.referrer_id = referrerId;
+      
+      // Also create the referral record
+      const { error: referralError } = await supabase
+        .from('referrals')
+        .insert({
+          referrer_id: referrerId,
+          referred_id: user.id,
+          status: 'ACTIVE',
+          referral_code: referrerCode?.toUpperCase() || '',
+          created_at: now
+        });
+      
+      if (referralError && referralError.code !== '23505') {
+        console.warn('Failed to create referral record:', referralError);
+      }
     }
     
     if (!existingProfile.referral_code) {
@@ -109,7 +147,7 @@ export function useAuth() {
       password: string,
       fullName?: string,
       country?: string | null,
-      referrerCode?: string | null  // ✅ Pass referral CODE (string), not ID
+      referrerCode?: string | null
     ) => {
       const supabase = createClient();
       const { data, error } = await supabase.auth.signUp({
@@ -127,7 +165,7 @@ export function useAuth() {
       });
       if (error) throw error;
       
-      // Ensure profile is created with referrer_id resolved from code
+      // Ensure profile is created with referrer
       if (data.user) {
         await ensureProfileExists(supabase, data.user, referrerCode);
       }
