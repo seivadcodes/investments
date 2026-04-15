@@ -196,14 +196,14 @@ export default function InvestorDashboardPage() {
         setDailyEarnings(dailyTotal);
       }
 
-      // 3. 🔑 Fetch Referral Stats (READ ONLY - no calculation)
+      // 3. 🔑 Fetch Referral Stats - Using referrer_id column
       console.log('[Dashboard] Fetching referral stats...');
 
-      // Get historical referral earnings from database
+      // Get historical referral earnings using the new referrer_id column
       const refEarningsRes = await supabase
         .from('referral_earnings')
         .select('amount')
-        .eq('referral_id', currentUser.id);
+        .eq('referrer_id', currentUser.id);
 
       // Get referral counts
       const refCountRes = await supabase
@@ -215,6 +215,7 @@ export default function InvestorDashboardPage() {
       const refDetailsRes = await supabase
         .from('referrals')
         .select(`
+          id,
           referred_id,
           status,
           created_at,
@@ -249,11 +250,11 @@ export default function InvestorDashboardPage() {
               .eq('user_id', r.referred_id)
               .eq('status', 'ONLINE');
 
-            // Get total earnings for this referee from referral_earnings
+            // Get total earnings for this specific referee
             const { data: earnings } = await supabase
               .from('referral_earnings')
               .select('amount')
-              .eq('referral_id', currentUser.id)
+              .eq('referrer_id', currentUser.id)
               .eq('referee_id', r.referred_id);
 
             const totalEarned = earnings?.reduce((sum: number, e: any) => sum + (e.amount || 0), 0) || 0;
@@ -512,7 +513,7 @@ export default function InvestorDashboardPage() {
       const { data: earnings, error: fetchError } = await supabase
         .from('referral_earnings')
         .select('amount')
-        .eq('referral_id', currentUser.id);
+        .eq('referrer_id', currentUser.id);
 
       if (fetchError || !earnings || earnings.length === 0) {
         showNotification('No referral earnings to claim', 'info');
@@ -531,7 +532,7 @@ export default function InvestorDashboardPage() {
       await supabase.from('profiles').update({ wallet_balance: newBalance }).eq('id', currentUser.id);
       
       // Clear claimed earnings
-      await supabase.from('referral_earnings').delete().eq('referral_id', currentUser.id);
+      await supabase.from('referral_earnings').delete().eq('referrer_id', currentUser.id);
       
       // Log transaction
       await supabase.from('wallet_transactions').insert({

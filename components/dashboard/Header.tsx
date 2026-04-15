@@ -111,6 +111,13 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
             >
               Wallet
             </button>
+
+            <button
+  onClick={() => window.location.href = '/trends'}
+  className="text-sm font-medium transition-colors text-slate-500 hover:text-slate-800"
+>
+  Forex
+</button>
             
             {/* 🔑 Broker Navigation - Only for Authorized Emails */}
             {isBrokerAuthorized && (
@@ -308,6 +315,13 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                     <span>Wallet</span>
                   </div>
                 </button>
+
+                <button
+  onClick={() => window.location.href = '/trends'}
+  className="text-sm font-medium transition-colors text-slate-500 hover:text-slate-800"
+>
+  Forex
+</button>
                 
                 {/* 🔑 Mobile Broker Menu Item - Only for Authorized */}
                 {isBrokerAuthorized && (
@@ -325,6 +339,8 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                       <span>Broker Hub</span>
                     </div>
                   </button>
+
+                  
                 )}
                 
                 <div className="pt-4 border-t border-slate-200 mt-4">
