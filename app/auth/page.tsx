@@ -1,5 +1,9 @@
 'use client';
 
+// ✅ Force dynamic rendering - prevents prerendering errors
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAuth } from '@/hooks/useAuth';

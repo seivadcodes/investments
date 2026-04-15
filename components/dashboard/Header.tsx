@@ -113,7 +113,7 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
             </button>
 
             <button
-  onClick={() => window.location.href = '/trends'}
+  onClick={() => window.location.href = '/trend'}
   className="text-sm font-medium transition-colors text-slate-500 hover:text-slate-800"
 >
   Forex
@@ -317,7 +317,7 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                 </button>
 
                 <button
-  onClick={() => window.location.href = '/trends'}
+  onClick={() => window.location.href = '/trend'}
   className="text-sm font-medium transition-colors text-slate-500 hover:text-slate-800"
 >
   Forex
