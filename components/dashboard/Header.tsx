@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
-import { ShieldCheck, Menu, X, ChevronDown, LogOut, Settings, Wallet, Users } from 'lucide-react';
+import { ShieldCheck, Menu, X, ChevronDown, LogOut, Settings, Wallet, Users, TrendingUp } from 'lucide-react';
 import { ViewState } from './DashboardViews';
 import { cn } from '@/lib/utils';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -113,11 +113,15 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
             </button>
 
             <button
-  onClick={() => window.location.href = '/trend'}
-  className="text-sm font-medium transition-colors text-slate-500 hover:text-slate-800"
->
-  Forex
-</button>
+              onClick={() => window.location.href = '/trend'}
+              className={cn(
+                "text-sm font-medium transition-colors flex items-center gap-1",
+                "text-slate-500 hover:text-slate-800"
+              )}
+            >
+              <TrendingUp className="w-4 h-4" />
+              Forex
+            </button>
             
             {/* 🔑 Broker Navigation - Only for Authorized Emails */}
             {isBrokerAuthorized && (
@@ -317,11 +321,17 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                 </button>
 
                 <button
-  onClick={() => window.location.href = '/trend'}
-  className="text-sm font-medium transition-colors text-slate-500 hover:text-slate-800"
->
-  Forex
-</button>
+                  onClick={() => window.location.href = '/trend'}
+                  className={cn(
+                    "w-full text-left px-4 py-3 rounded-lg font-medium transition-colors",
+                    "text-slate-600 hover:bg-slate-50"
+                  )}
+                >
+                  <div className="flex items-center gap-3">
+                    <TrendingUp className="w-5 h-5" />
+                    <span>Forex</span>
+                  </div>
+                </button>
                 
                 {/* 🔑 Mobile Broker Menu Item - Only for Authorized */}
                 {isBrokerAuthorized && (
@@ -339,8 +349,6 @@ export default function Header({ user, onSignOut, currentView, onViewChange }: H
                       <span>Broker Hub</span>
                     </div>
                   </button>
-
-                  
                 )}
                 
                 <div className="pt-4 border-t border-slate-200 mt-4">
