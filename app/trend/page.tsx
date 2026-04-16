@@ -4,12 +4,18 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Trash2, Download, Loader2, CheckCircle, AlertCircle, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, Trash2, Download, Loader2, CheckCircle, AlertCircle, ArrowUp, ArrowDown, ShieldCheck, Lock } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase';
 import Header from '@/components/dashboard/Header';
 import Footer from '@/components/dashboard/Footer';
+
+// 🔑 ADD EDITOR EMAILS HERE - Simple frontend check
+const EDITOR_EMAILS = [
+  'daviesyoung10@gmail.com',
+  // Add more emails as needed
+];
 
 type Asset = 'XAUUSD' | 'EURUSD';
 
@@ -41,6 +47,9 @@ export default function TrendPage() {
   const { user, loading: authLoading, signOut } = useAuth();
   const router = useRouter();
   
+  // 🔑 Simple email check - no DB query needed
+  const canEdit = user?.email ? EDITOR_EMAILS.includes(user.email) : false;
+
   const [activeTab, setActiveTab] = useState<Asset>('XAUUSD');
   const [rows, setRows] = useState<ChartRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -68,7 +77,6 @@ export default function TrendPage() {
       const { data, error } = await supabase
         .from('chart_simple')
         .select('*')
-        .eq('user_id', user.id)
         .eq('asset', activeTab)
         .order('date', { ascending: false });
       
@@ -141,8 +149,7 @@ export default function TrendPage() {
       const { error } = await supabase
         .from('chart_simple')
         .delete()
-        .eq('id', id)
-        .eq('user_id', user!.id);
+        .eq('id', id);
       if (error) throw error;
       showNotification('Deleted', 'info');
       fetchRows();
@@ -220,13 +227,24 @@ export default function TrendPage() {
       />
 
       <main className="flex-1 max-w-6xl mx-auto px-4 sm:px-6 py-4 sm:py-6 w-full">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold text-slate-900">
-            {activeTab === 'XAUUSD' ? '🥇 Gold (XAU/USD)' : '💶 Euro (EUR/USD)'}
-          </h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Track daily 03:30 UTC → Peak → Close movements
-          </p>
+        <div className="mb-6 flex items-start justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">
+              {activeTab === 'XAUUSD' ? '🥇 Gold (XAU/USD)' : '💶 Euro (EUR/USD)'}
+            </h1>
+            <p className="text-slate-500 text-sm mt-1">
+              Track daily 03:30 UTC → Peak → Close movements
+            </p>
+          </div>
+          
+          {/* Access Indicator */}
+          <div className={cn(
+            "flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-bold",
+            canEdit ? "bg-green-100 text-green-700" : "bg-slate-100 text-slate-500"
+          )}>
+            {canEdit ? <ShieldCheck className="w-3 h-3" /> : <Lock className="w-3 h-3" />}
+            {canEdit ? "Editor" : "View Only"}
+          </div>
         </div>
 
         <div className="flex gap-2 mb-6">
@@ -254,115 +272,123 @@ export default function TrendPage() {
           </button>
         </div>
 
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-white rounded-2xl border border-slate-200 p-4 mb-6"
-        >
-          <div className="flex items-center gap-2 mb-3">
-            <Plus className="w-5 h-5 text-blue-600" />
-            <span className="font-bold">Add New Day</span>
-          </div>
-          
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">Date</label>
-              <input
-                type="date"
-                value={newRow.date}
-                onChange={(e) => setNewRow(prev => ({ ...prev, date: e.target.value }))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-            
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">03:30 Price</label>
-              <input
-                type="number"
-                step={activeTab === 'XAUUSD' ? "0.01" : "0.0001"}
-                value={newRow.open_0330 ?? ''}
-                onChange={(e) => setNewRow(prev => ({ ...prev, open_0330: parseFloat(e.target.value) }))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 font-mono"
-                placeholder={activeTab === 'XAUUSD' ? "e.g. 4650.00" : "e.g. 1.0800"}
-              />
-            </div>
-            
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">Peak Price</label>
-              <input
-                type="number"
-                step={activeTab === 'XAUUSD' ? "0.01" : "0.0001"}
-                value={newRow.peak_price ?? ''}
-                onChange={(e) => setNewRow(prev => ({ ...prev, peak_price: parseFloat(e.target.value) }))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 font-mono"
-                placeholder={activeTab === 'XAUUSD' ? "e.g. 4750.00" : "e.g. 1.0850"}
-              />
-            </div>
-            
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">Peak Time (UTC)</label>
-              <div className="flex items-center gap-1">
-                <input
-                  type="number"
-                  min="0"
-                  max="23"
-                  value={newRow.peak_hour ?? ''}
-                  onChange={(e) => {
-                    const h = e.target.value === '' ? undefined : Math.min(23, Math.max(0, parseInt(e.target.value) || 0));
-                    setNewRow(prev => ({
-                      ...prev,
-                      peak_hour: h,
-                      peak_time: `${String(h ?? 0).padStart(2, '0')}:${String(prev.peak_minute ?? 0).padStart(2, '0')}`
-                    }));
-                  }}
-                  className="w-14 px-2 py-2 border border-slate-300 rounded-lg text-sm text-center font-mono focus:ring-2 focus:ring-blue-500"
-                  placeholder="HH"
-                />
-                <span className="text-slate-400 font-bold text-lg">:</span>
-                <input
-                  type="number"
-                  min="0"
-                  max="59"
-                  value={newRow.peak_minute ?? ''}
-                  onChange={(e) => {
-                    const m = e.target.value === '' ? undefined : Math.min(59, Math.max(0, parseInt(e.target.value) || 0));
-                    setNewRow(prev => ({
-                      ...prev,
-                      peak_minute: m,
-                      peak_time: `${String(prev.peak_hour ?? 0).padStart(2, '0')}:${String(m ?? 0).padStart(2, '0')}`
-                    }));
-                  }}
-                  className="w-14 px-2 py-2 border border-slate-300 rounded-lg text-sm text-center font-mono focus:ring-2 focus:ring-blue-500"
-                  placeholder="MM"
-                />
-              </div>
-            </div>
-            
-            <div>
-              <label className="block text-xs text-slate-500 mb-1">Close Price</label>
-              <input
-                type="number"
-                step={activeTab === 'XAUUSD' ? "0.01" : "0.0001"}
-                value={newRow.close_price ?? ''}
-                onChange={(e) => setNewRow(prev => ({ ...prev, close_price: parseFloat(e.target.value) }))}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 font-mono"
-                placeholder={activeTab === 'XAUUSD' ? "e.g. 4700.00" : "e.g. 1.0820"}
-              />
-            </div>
-            
-            <button
-              onClick={handleAdd}
-              disabled={adding}
-              className={cn(
-                "px-4 py-2 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2",
-                adding ? "bg-slate-400 cursor-not-allowed" : "bg-green-600 hover:bg-green-700"
-              )}
+        {/* Add Form - ONLY SHOWS IF canEdit */}
+        <AnimatePresence>
+          {canEdit && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
             >
-              {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              Add
-            </button>
-          </div>
-        </motion.div>
+              <div className="bg-white rounded-2xl border border-slate-200 p-4 mb-6">
+                <div className="flex items-center gap-2 mb-3">
+                  <Plus className="w-5 h-5 text-blue-600" />
+                  <span className="font-bold">Add New Day</span>
+                </div>
+                
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 items-end">
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Date</label>
+                    <input
+                      type="date"
+                      value={newRow.date}
+                      onChange={(e) => setNewRow(prev => ({ ...prev, date: e.target.value }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">03:30 Price</label>
+                    <input
+                      type="number"
+                      step={activeTab === 'XAUUSD' ? "0.01" : "0.0001"}
+                      value={newRow.open_0330 ?? ''}
+                      onChange={(e) => setNewRow(prev => ({ ...prev, open_0330: parseFloat(e.target.value) }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 font-mono"
+                      placeholder={activeTab === 'XAUUSD' ? "e.g. 4650.00" : "e.g. 1.0800"}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Peak Price</label>
+                    <input
+                      type="number"
+                      step={activeTab === 'XAUUSD' ? "0.01" : "0.0001"}
+                      value={newRow.peak_price ?? ''}
+                      onChange={(e) => setNewRow(prev => ({ ...prev, peak_price: parseFloat(e.target.value) }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 font-mono"
+                      placeholder={activeTab === 'XAUUSD' ? "e.g. 4750.00" : "e.g. 1.0850"}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Peak Time (UTC)</label>
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min="0"
+                        max="23"
+                        value={newRow.peak_hour ?? ''}
+                        onChange={(e) => {
+                          const h = e.target.value === '' ? undefined : Math.min(23, Math.max(0, parseInt(e.target.value) || 0));
+                          setNewRow(prev => ({
+                            ...prev,
+                            peak_hour: h,
+                            peak_time: `${String(h ?? 0).padStart(2, '0')}:${String(prev.peak_minute ?? 0).padStart(2, '0')}`
+                          }));
+                        }}
+                        className="w-14 px-2 py-2 border border-slate-300 rounded-lg text-sm text-center font-mono focus:ring-2 focus:ring-blue-500"
+                        placeholder="HH"
+                      />
+                      <span className="text-slate-400 font-bold text-lg">:</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="59"
+                        value={newRow.peak_minute ?? ''}
+                        onChange={(e) => {
+                          const m = e.target.value === '' ? undefined : Math.min(59, Math.max(0, parseInt(e.target.value) || 0));
+                          setNewRow(prev => ({
+                            ...prev,
+                            peak_minute: m,
+                            peak_time: `${String(prev.peak_hour ?? 0).padStart(2, '0')}:${String(m ?? 0).padStart(2, '0')}`
+                          }));
+                        }}
+                        className="w-14 px-2 py-2 border border-slate-300 rounded-lg text-sm text-center font-mono focus:ring-2 focus:ring-blue-500"
+                        placeholder="MM"
+                      />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs text-slate-500 mb-1">Close Price</label>
+                    <input
+                      type="number"
+                      step={activeTab === 'XAUUSD' ? "0.01" : "0.0001"}
+                      value={newRow.close_price ?? ''}
+                      onChange={(e) => setNewRow(prev => ({ ...prev, close_price: parseFloat(e.target.value) }))}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 font-mono"
+                      placeholder={activeTab === 'XAUUSD' ? "e.g. 4700.00" : "e.g. 1.0820"}
+                    />
+                  </div>
+                  
+                  <button
+                    onClick={handleAdd}
+                    disabled={adding}
+                    className={cn(
+                      "px-4 py-2 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2",
+                      adding ? "bg-slate-400 cursor-not-allowed" : "bg-green-600 hover:bg-green-700"
+                    )}
+                  >
+                    {adding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                    Add
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="flex items-center justify-between mb-3">
           <h2 className="font-bold text-lg">Observations</h2>
@@ -386,7 +412,7 @@ export default function TrendPage() {
                   <th className="text-right px-4 py-3 font-semibold text-slate-700">Close Price</th>
                   <th className="text-center px-4 py-3 font-semibold text-slate-700">Close Time</th>
                   <th className="text-right px-4 py-3 font-semibold text-slate-700">03:30 → Peak</th>
-                  <th className="px-4 py-3"></th>
+                  <th className="px-4 py-3 w-10"></th>
                 </tr>
               </thead>
               <tbody>
@@ -400,7 +426,7 @@ export default function TrendPage() {
                 ) : rows.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
-                      No observations yet. Add your first day above! 👆
+                      {canEdit ? "No observations yet. Add your first day above! 👆" : "No data available yet."}
                     </td>
                   </tr>
                 ) : (
@@ -422,13 +448,15 @@ export default function TrendPage() {
                           {diff} ({pct}%)
                         </td>
                         <td className="px-4 py-3">
-                          <button
-                            onClick={() => row.id && handleDelete(row.id)}
-                            className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Delete"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {canEdit && (
+                            <button
+                              onClick={() => row.id && handleDelete(row.id)}
+                              className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                              title="Delete"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     );
@@ -438,19 +466,6 @@ export default function TrendPage() {
             </table>
           </div>
         </div>
-
-        {rows.length >= 3 && (
-          <div className="mt-6 bg-blue-50 border border-blue-200 rounded-xl p-4">
-            <p className="text-sm text-blue-800">
-              <strong>💡 Quick insight:</strong> Over your last {rows.length} entries, 
-              {activeTab === 'XAUUSD' ? ' gold' : ' EUR/USD'} moved 
-              <span className="font-bold">
-                {' '}{rows.filter(r => formatDiff(r.open_0330, r.peak_price).isBullish).length}/{rows.length}{' '}
-              </span>
-              times in the direction of the peak after 03:30 UTC.
-            </p>
-          </div>
-        )}
       </main>
 
       <Footer />
