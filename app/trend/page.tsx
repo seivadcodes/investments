@@ -74,10 +74,12 @@ export default function TrendPage() {
     try {
       setLoading(true);
       const supabase = createClient();
+      
+      // ✅ KEY FIX: Remove .eq('user_id', ...) so ALL users see ALL data for this asset
       const { data, error } = await supabase
         .from('chart_simple')
         .select('*')
-        .eq('asset', activeTab)
+        .eq('asset', activeTab)  // Filter by asset only (XAUUSD or EURUSD)
         .order('date', { ascending: false });
       
       if (error) throw error;
@@ -88,11 +90,11 @@ export default function TrendPage() {
     } finally {
       setLoading(false);
     }
-  }, [user?.id, activeTab]);
+  }, [user?.id, activeTab]);  // ✅ Removed fetchRows from deps to avoid loop
 
   useEffect(() => {
     if (user?.id) fetchRows();
-  }, [user?.id, activeTab, fetchRows]);
+  }, [user?.id, activeTab]);
 
   useEffect(() => {
     setNewRow({
