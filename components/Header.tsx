@@ -1,31 +1,52 @@
+// components/Header.tsx
 'use client'
 import Link from 'next/link'
+import Image from 'next/image'
 import { useState } from 'react'
 
 export default function Header(){
   const [open,setOpen]=useState(false)
   return (
-    <header className="sticky top-0 z-50 bg-white/90 backdrop-blur border-b border-zinc-200">
-      <div className="max-w-6xl mx-auto px-4 md:px-6 h- flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-black text-white flex items-center justify-center font-black">J</div>
+    <header className="sticky top-0 z-50 w-full bg-white/95 backdrop-blur border-b border-zinc-200">
+      <div className="max-w-7xl mx-auto px-4 md:px-6 h- flex items-center justify-between">
+        {/* Logo */}
+        <Link href="/" className="flex items-center gap-3">
+          <div className="relative h-9 w-9 md:h-10 md:w-10 shrink-0">
+            <Image
+              src="/jvb-logo.png"
+              alt="JVB Logo"
+              fill
+              className="object-contain"
+              priority
+            />
+          </div>
           <div className="leading-tight">
-            <p className="font-black text- tracking-tight text-black">Job Vacancy Basket</p>
-            <p className="text- font-bold tracking-widest uppercase text-zinc-500">Your basket of job vacancies</p>
+            <p className="text- font-black tracking-tight text-black">Job Vacancy Basket</p>
+            <p className="hidden md:block text- font-bold tracking-widest uppercase text-zinc-500 -mt-0.5">Your basket of job vacancies</p>
           </div>
         </Link>
-        <nav className="hidden md:flex items-center gap-6 text-sm font-medium text-black">
-          <Link href="/jobs" className="hover:underline">Vacancies</Link>
-          <Link href="/about" className="hover:underline">About</Link>
-          <Link href="/admin/upload" className="bg-black text-white px-4 py-2 rounded-full text-sm font-bold">Post Job</Link>
+
+        {/* Desktop Nav */}
+        <nav className="hidden md:flex items-center gap-6">
+          <Link href="/" className="text- font-medium text-zinc-700 hover:text-black">Home</Link>
+          <Link href="/homepage" className="text- font-medium text-zinc-700 hover:text-black">Vacancies</Link>
+          <Link href="/about" className="text- font-medium text-zinc-700 hover:text-black">About</Link>
+          <Link href="/post-job" className="text- font-bold bg-black text-white px-4 py-2 rounded-full hover:bg-zinc-900">Post a Vacancy</Link>
         </nav>
-        <button onClick={()=>setOpen(!open)} className="md:hidden text-black">☰</button>
+
+        {/* Mobile Button */}
+        <button onClick={()=>setOpen(!open)} className="md:hidden h-9 w-9 grid place-items-center rounded-full border border-zinc-200">
+          <span className="text-black">{open?'✕':'☰'}</span>
+        </button>
       </div>
-      {open&&(
-        <div className="md:hidden border-t border-zinc-200 bg-white px-4 py-4 flex flex-col gap-3 text-sm text-black">
-          <Link href="/jobs" onClick={()=>setOpen(false)}>Vacancies</Link>
-          <Link href="/about" onClick={()=>setOpen(false)}>About</Link>
-          <Link href="/admin/upload" onClick={()=>setOpen(false)} className="bg-black text-white px-4 py-2 rounded-full text-center font-bold">Post Job</Link>
+
+      {/* Mobile Menu */}
+      {open && (
+        <div className="md:hidden border-t border-zinc-200 bg-white px-4 py-4 grid gap-3">
+          <Link href="/" onClick={()=>setOpen(false)} className="text- font-medium text-black">Home</Link>
+          <Link href="/homepage" onClick={()=>setOpen(false)} className="text- font-medium text-black">Vacancies</Link>
+          <Link href="/about" onClick={()=>setOpen(false)} className="text- font-medium text-black">About</Link>
+          <Link href="/post-job" onClick={()=>setOpen(false)} className="text- font-bold bg-black text-white px-4 py-3 rounded-xl text-center">Post a Vacancy</Link>
         </div>
       )}
     </header>
