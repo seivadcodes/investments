@@ -11,7 +11,7 @@ export default function Header(){
       <div className="max-w-7xl mx-auto px-4 md:px-6 h- flex items-center justify-between">
         {/* Logo */}
         <Link href="/" className="flex items-center gap-3">
-          <div className="relative h-9 w-9 md:h-10 md:w-10 shrink-0">
+          <div className="relative h-12 w-12 md:h-14 md:w-14 shrink-0">
             <Image
               src="/jvb-logo.png"
               alt="JVB Logo"
@@ -20,10 +20,7 @@ export default function Header(){
               priority
             />
           </div>
-          <div className="leading-tight">
-            <p className="text- font-black tracking-tight text-black">Job Vacancy Basket</p>
-            <p className="hidden md:block text- font-bold tracking-widest uppercase text-zinc-500 -mt-0.5">Your basket of job vacancies</p>
-          </div>
+          <p className="text- md:text- font-black tracking-tight text-black">Job Vacancy Basket</p>
         </Link>
 
         {/* Desktop Nav */}
@@ -31,11 +28,11 @@ export default function Header(){
           <Link href="/" className="text- font-medium text-zinc-700 hover:text-black">Home</Link>
           <Link href="/homepage" className="text- font-medium text-zinc-700 hover:text-black">Vacancies</Link>
           <Link href="/about" className="text- font-medium text-zinc-700 hover:text-black">About</Link>
-          <Link href="/post-job" className="text- font-bold bg-black text-white px-4 py-2 rounded-full hover:bg-zinc-900">Post a Vacancy</Link>
+          <Link href="/post-job" className="text- font-bold bg-black text-white px-5 py-2.5 rounded-full hover:bg-zinc-900">Post a Job</Link>
         </nav>
 
         {/* Mobile Button */}
-        <button onClick={()=>setOpen(!open)} className="md:hidden h-9 w-9 grid place-items-center rounded-full border border-zinc-200">
+        <button onClick={()=>setOpen(!open)} className="md:hidden h-10 w-10 grid place-items-center rounded-full border border-zinc-200">
           <span className="text-black">{open?'✕':'☰'}</span>
         </button>
       </div>
@@ -46,7 +43,7 @@ export default function Header(){
           <Link href="/" onClick={()=>setOpen(false)} className="text- font-medium text-black">Home</Link>
           <Link href="/homepage" onClick={()=>setOpen(false)} className="text- font-medium text-black">Vacancies</Link>
           <Link href="/about" onClick={()=>setOpen(false)} className="text- font-medium text-black">About</Link>
-          <Link href="/post-job" onClick={()=>setOpen(false)} className="text- font-bold bg-black text-white px-4 py-3 rounded-xl text-center">Post a Vacancy</Link>
+          <Link href="/post-job" onClick={()=>setOpen(false)} className="text- font-bold bg-black text-white px-4 py-3 rounded-xl text-center">Post a Job</Link>
         </div>
       )}
     </header>
