@@ -24,10 +24,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`} suppressHydrationWarning>
       <body className="min-h-full flex flex-col" suppressHydrationWarning>
-        <Script 
-          async 
-          src="https://www.googletagmanager.com/gtag/js?id=G-2CHJDV7Z7N" 
-        />
+        <Header />
+        <div className="flex-1">{children}</div>
+        <Footer />
+
+        <Script src="https://www.googletagmanager.com/gtag/js?id=G-2CHJDV7Z7N" strategy="afterInteractive" />
         <Script id="google-analytics" strategy="afterInteractive">
           {`
             window.dataLayer = window.dataLayer || [];
@@ -36,9 +37,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             gtag('config', 'G-2CHJDV7Z7N');
           `}
         </Script>
-        <Header />
-        <div className="flex-1">{children}</div>
-        <Footer />
       </body>
     </html>
   );
