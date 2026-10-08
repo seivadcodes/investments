@@ -26,7 +26,7 @@ export default function Header(){
         {/* Desktop Nav */}
         <nav className="hidden md:flex items-center gap-6">
           <Link href="/" className="text- font-medium text-zinc-700 hover:text-black">Home</Link>
-          <Link href="/homepage" className="text- font-medium text-zinc-700 hover:text-black">Vacancies</Link>
+          <Link href="/jobs" className="text- font-medium text-zinc-700 hover:text-black">Vacancies</Link>
           <Link href="/about" className="text- font-medium text-zinc-700 hover:text-black">About</Link>
           <Link href="/post-job" className="text- font-bold bg-black text-white px-5 py-2.5 rounded-full hover:bg-zinc-900">Post a Job</Link>
         </nav>

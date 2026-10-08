@@ -24,7 +24,7 @@ export default function JobsClient({ initialJobs }: { initialJobs: any[] }) {
     <main className="min-h-screen bg-[#f6f5f2] text-black">
       <div className="max-w-5xl mx-auto p-6">
         <Link href="/" className="text-sm text-black underline font-medium">← Home</Link>
-        <h1 className="text-3xl font-black mt-3 tracking-tight text-black">All Jobs — {filtered.length} live</h1>
+        <h1 className="text-3xl font-black mt-3 tracking-tight text-black">Recent Jobs — {filtered.length} live</h1>
         <div className="mt-5 bg-white border border-zinc-200 rounded-2xl p-4 flex flex-wrap gap-3 shadow-sm">
           <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search title..." className="border border-zinc-200 rounded-xl p-2.5 text-sm text-black bg-white placeholder:text-zinc-400 w-52"/>
           <select value={county} onChange={e=>setCounty(e.target.value)} className="border border-zinc-200 rounded-xl p-2.5 text-sm text-black bg-white">{COUNTIES.map(c=><option key={c}>{c}</option>)}</select>
