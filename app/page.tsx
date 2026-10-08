@@ -17,8 +17,7 @@ async function getJobs(params: { q?: string, county?: string, category?: string 
   if (params.q) query = query.or(`title.ilike.%${params.q}%,company_name.ilike.%${params.q}%`)
   if (params.county && params.county!== 'All Counties' && params.county!== 'All') query = query.ilike('location_county', `%${params.county}%`)
   if (params.category && params.category!== 'All Categories' && params.category!== 'All') query = query.eq('category', params.category)
-  const { data, error } = await query
-  if (error) console.error(error)
+  const { data } = await query
   return data || []
 }
 
